@@ -1,0 +1,23 @@
+# 依赖与环境（不要提交）
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# 运行产物
+samples/demo/
+*.zh.pdf
+overrides.json
+*.log
+
+# 临时文件与本地配置
+*.tmp
+samples/_*.png
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
