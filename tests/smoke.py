@@ -47,6 +47,23 @@ def structural() -> None:
     check(any('class="head"' in h for h in html), "题名进 head")
     check(any("<h2" in h for h in html), "一级标题成 h2")
     check("Noto Serif CJK" in build.CSS, "CSS 用可分发的中文字体")
+    # 表格重建：带 table_data 的表块渲染为 HTML 表格而非图片
+    tb = Block(id="tb", page=0, kind="table", text="Table 1: x", x0=0, y0=0, x1=10, y1=10,
+               zh="Table 1: 甲", meta={"table_data": [["A", "B"], ["1", "2"]]})
+    th = build._table(tb, "")
+    check("<table>" in th and "<th>A</th>" in th and "<td>1</td>" in th, "结构化表格渲染为 HTML")
+    doc_blocks.append(tb)
+    html2 = build.to_html_blocks(type("D", (), {"blocks": doc_blocks})())
+    check(any("<table>" in h for h in html2), "表格块进入输出流")
+    # MCP 层：实现函数可直接调用（不经 stdio），server 可构造
+    try:
+        from papertrans import mcp_server
+        r = json.loads(mcp_server._doctor_impl())
+        check(r["ok"], "MCP doctor 自检通过")
+        server = mcp_server.create_server()
+        check(server is not None, "MCP server 可构造")
+    except ImportError:
+        print("  skip  mcp 未安装，跳过 MCP 层检查")
 
 
 def e2e(pdf: str) -> None:
@@ -64,6 +81,15 @@ def e2e(pdf: str) -> None:
     check(rep["coverage"] >= 0.99, f"译文覆盖率 {rep['coverage']}")
     check(rep["pages_output"] >= 1, f"页数 {rep['pages_output']}")
     check(not rep.get("overflow_pages"), "无版心溢出")
+    with open(os.path.join(wd, "doc.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+    n_html_tables = sum(1 for b in doc["blocks"] if b.get("meta", {}).get("table_data"))
+    n_tables = sum(1 for b in doc["blocks"] if b["kind"] == "table")
+    check(n_tables >= 1, f"识别表格 {n_tables} 张")
+    check(n_html_tables >= 1, f"其中 {n_html_tables} 张重建为可编辑 HTML")
+    with open(os.path.join(wd, "final.html"), encoding="utf-8") as f:
+        fh = f.read()
+    check("<table><thead>" in fh, "输出 PDF 含结构化表格")
 
 
 if __name__ == "__main__":

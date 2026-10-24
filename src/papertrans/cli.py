@@ -43,7 +43,7 @@ def _finish_pdf(doc: Doc, blocks: list[str], wd: str, output: str | None) -> tup
 def cmd_extract(args) -> int:
     wd = _workdir(args.out, args.pdf)
     os.makedirs(wd, exist_ok=True)
-    doc = extract.extract(args.pdf, wd, dpi=args.dpi, columns=args.columns)
+    doc = extract.extract(args.pdf, wd, dpi=args.dpi, columns=args.columns, tables=args.tables)
     doc.save(os.path.join(wd, "doc.json"))
     out = {"workdir": wd, "blocks": len(doc.blocks), "assets": len(doc.assets),
            "columns": doc.columns}
@@ -86,7 +86,7 @@ def cmd_build(args) -> int:
 def cmd_run(args) -> int:
     wd = _workdir(args.out, args.pdf)
     os.makedirs(wd, exist_ok=True)
-    doc = extract.extract(args.pdf, wd, dpi=args.dpi, columns=args.columns)
+    doc = extract.extract(args.pdf, wd, dpi=args.dpi, columns=args.columns, tables=args.tables)
     doc.save(os.path.join(wd, "doc.json"))
     if getattr(args, "review", False):
         review.write_review(doc, wd)
@@ -166,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("-o", "--out")
     e.add_argument("--dpi", type=int, default=320)
     e.add_argument("--columns", type=int, choices=[1, 2])
+    e.add_argument("--tables", choices=["auto", "image"], default="auto",
+                   help="auto=尝试重建可编辑表格（失败回退图片），image=一律保留为图")
     e.add_argument("--review", action="store_true", help="导出裁剪复核页 review/index.html")
     e.set_defaults(func=cmd_extract)
 
@@ -193,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--style", default="academic")
     r.add_argument("--dpi", type=int, default=320)
     r.add_argument("--columns", type=int, choices=[1, 2])
+    r.add_argument("--tables", choices=["auto", "image"], default="auto")
     r.add_argument("--review", action="store_true", help="额外导出裁剪复核页")
     r.set_defaults(func=cmd_run)
 

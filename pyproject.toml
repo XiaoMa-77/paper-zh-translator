@@ -4,19 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papertrans"
-version = "0.2.0"
+version = "0.3.0"
 description = "PDF 论文中文翻译：保持双栏版式、公式与表格"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24",
     "pyyaml>=6.0",
+    "pdfplumber>=0.11",
 ]
 
 [project.scripts]
 papertrans = "papertrans.cli:main"
+papertrans-mcp = "papertrans.mcp_server:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "mcp>=1.2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

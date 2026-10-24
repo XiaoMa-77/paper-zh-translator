@@ -47,6 +47,29 @@ papertrans run paper.pdf -o build/paper --provider openai
 
 没有 API Key 时用 `--provider none`：不翻译、原样回填，用来验证抽取与版式。
 
+## MCP 接入（让 AI 助手调用）
+
+安装 MCP 支持后，Claude Desktop 等客户端可以直接把论文翻译当工具调用：
+
+```bash
+pip install "papertrans[mcp]"     # 或 pip install -e '.[mcp]'
+```
+
+客户端配置（以 Claude Desktop 为例，`claude_desktop_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "papertrans": {
+      "command": "papertrans-mcp",
+      "env": { "LLM_API_KEY": "sk-xxx", "LLM_BASE_URL": "https://api.deepseek.com/v1", "LLM_MODEL": "deepseek-chat" }
+    }
+  }
+}
+```
+
+提供的工具：`doctor`（环境自检）、`extract_structure`（只抽取检查）、`translate_workdir`（翻译，需 LLM）、`build_pdf`（排版出片）、`qa_report`（质检）、`translate_paper`（一条龙）。兼容 mcp 1.x/2.x。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -66,6 +89,7 @@ papertrans run paper.pdf -o build/paper --provider openai
 --glossary glossary.yaml    # 术语表，模板见 examples/glossary.example.yaml
 --style academic            # 翻译风格，注入提示词（academic/plain 等）
 --columns 1|2               # 强制栏数，默认自动判断
+--tables auto|image         # 表格：auto=尝试重建可编辑 HTML（失败回退图片），image=一律保留为图
 --review                    # 导出裁剪复核页
 ```
 
@@ -112,7 +136,7 @@ papertrans extract paper.pdf -o build/x     # 重跑生效
 |---|---|
 | 文本、分栏、标题层级 | 稳定；页眉页脚、arXiv 戳、版权行自动剔除 |
 | 图（位图 / 带框矢量图） | 稳定，多数无需干预 |
-| 表 | 定位并保留为图，**尚未重建为可编辑表格** |
+| 表 | 优先重建为可编辑 HTML 表格（pdfplumber，置信度不足自动回退为图）；表题翻译，单元格保留原文 |
 | 公式 | 常见单/多行公式整体成图；极密集排版可能漏几块碎片 |
 | 参考文献 | 保留英文原样 |
 | 扫描件 | 明确报错，不硬跑（OCR 未实现） |

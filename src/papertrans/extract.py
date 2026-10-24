@@ -253,7 +253,39 @@ def _figure_box(rects: list[pymupdf.Rect], clip: pymupdf.Rect,
     return box if box.height > 24 and box.width > 40 else clip
 
 
-def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None) -> Doc:
+def _table_rows(page_pl, box: pymupdf.Rect) -> list[list[str]] | None:
+    """pdfplumber 重建表格结构，多策略尝试、按非空格子数择优。
+
+    严格置信度：至少 2 行 2 列、非空格子过半，否则返回 None 回退为整图。
+    宁可保留图片，也不要把正文误判成表格。
+    """
+    if page_pl is None:
+        return None
+    try:
+        region = page_pl.crop((box.x0, box.y0, box.x1, box.y1))
+        candidates: list[list] = []
+        for cfg in ({"vertical_strategy": "text", "horizontal_strategy": "lines"},   # booktabs 首选
+                    {"vertical_strategy": "text", "horizontal_strategy": "text"}):   # 无线表的兜底
+            candidates.extend(region.extract_tables(cfg))
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda t: sum(1 for r in t for c in r if c and c.strip()))
+        rows = [[(c or "").replace("\n", " ").strip() for c in r] for r in best]
+        rows = [r for r in rows if any(r)]
+        n_cells = sum(len(r) for r in rows)
+        filled = sum(1 for r in rows for c in r if c)
+        if len(rows) < 2 or min(len(r) for r in rows) < 2 or n_cells < 6:
+            return None
+        if filled / n_cells < 0.5:
+            return None
+        width = max(len(r) for r in rows)
+        return [r + [""] * (width - len(r)) for r in rows]
+    except Exception:
+        return None
+
+
+def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
+            tables: str = "auto") -> Doc:
     """抽取整篇 PDF。图片写入 out_dir/fig，返回 Doc。"""
     os.makedirs(os.path.join(out_dir, "fig"), exist_ok=True)
     doc = pymupdf.open(path)
@@ -288,6 +320,7 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None)
     fig_no = 0
     tab_no = 0
     boxes: dict[int, list[pymupdf.Rect]] = {}
+    plumber = None          # pdfplumber 句柄，首次遇到表格时才懒加载
     for pno, page in enumerate(doc):
         pw = page.rect.width
         mid = pw / 2
@@ -368,7 +401,8 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None)
                 blk.meta["bbox"] = [round(v, 1) for v in box]
                 boxes.setdefault(pno, []).append(pymupdf.Rect(box))
 
-            # 表：题注在下方，先占位，图形区域稍后由 build 决定（默认保留为图）
+            # 表：题注下方区域。auto 模式先尝试 pdfplumber 重建为可编辑表格，
+            # 置信度不足（无横线/行列太少/格子太空）则回退为整图
             if kind == "table":
                 groups = [g for g in _group_rects(graphics) if g.height > 24]
                 below = [g for g in groups if y1 - 2 <= g.y0 <= y1 + 26]
@@ -387,7 +421,22 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None)
                     x_lo, x_hi = ((45, mid) if (narrow and x0 < mid) else (mid, pw - 45)) if narrow else (45, pw - 45)
                     box = pymupdf.Rect(x_lo, y1 + 2, x_hi, bottom if bottom - y1 > 28 else min(y1 + 200, page.rect.height - 40))
                 tab_no += 1
-                if box is not None and box.height > 24:
+                rows = None
+                if tables == "auto":
+                    if plumber is None:
+                        try:
+                            import pdfplumber
+                            plumber = pdfplumber.open(path)
+                        except ImportError:
+                            plumber = False    # 未安装：一直走图片回退
+                    page_pl = plumber.pages[pno] if plumber else None
+                    rows = _table_rows(page_pl, box)
+                if rows:
+                    blk.meta["table_data"] = rows
+                    blk.meta["bbox"] = [round(v, 1) for v in box]
+                    # 格子文字已在结构里，同样要剔除区域内的原文本块，避免与表格重复
+                    boxes.setdefault(pno, []).append(pymupdf.Rect(box))
+                elif box is not None and box.height > 24:
                     rel = f"fig/tab{tab_no}.png"
                     page.get_pixmap(clip=box, dpi=dpi).save(os.path.join(out_dir, rel))
                     result.assets[blk.id] = rel
@@ -401,6 +450,8 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None)
     result.blocks = _postprocess(result.blocks, body, boxes)
     for n, b in enumerate(result.blocks):
         b.id = f"b{n:04d}"
+    if plumber:
+        plumber.close()
     return result
 
 

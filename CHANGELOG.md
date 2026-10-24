@@ -2,6 +2,17 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.3.0] - 2026-10-24
+
+### 新增
+
+- **MCP Server**：`pip install papertrans[mcp]` 后运行 `papertrans-mcp`，Claude 等 AI 助手可直接调用六个工具（doctor / extract_structure / translate_workdir / build_pdf / qa_report / translate_paper 一条龙）；兼容 mcp 1.x（FastMCP）与 2.x（MCPServer）。
+- **表格重建为可编辑 HTML**：pdfplumber 多策略抽取（booktabs 横线优先、纯文本对齐兜底），按非空格子数择优；置信度不足（行列太少 / 格子太空）自动回退为图片，不误判正文。表题翻译、单元格保留原文（数字与术语不译）。`--tables auto|image` 可控，默认 auto。
+
+### 改进
+
+- pdfplumber 升级为核心依赖；`doctor` 相应报告表格重建可用性。
+
 ## [0.2.0] - 2026-10-24
 
 ### 修复

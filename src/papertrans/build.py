@@ -78,7 +78,14 @@ def _table(b: Block, alt: str) -> str:
     cap = _e(b.zh or b.text)
     m = re.match(r"^((?:table|tab\.)\s*[ivxlcdm\d]+[.:]?)\s*(.*)$", cap, re.IGNORECASE)
     lab, body = (m.group(1), m.group(2)) if m else ("", cap)
-    inner = f'<img src="{alt}" alt="" style="width:100%">' if alt else ""
+    rows = b.meta.get("table_data") or []
+    if rows:
+        # 结构化表格：pdfplumber 重建的行列，单元格保留原文（数字与术语不译）
+        thead = "".join(f"<th>{_e(c)}</th>" for c in rows[0])
+        trs = "".join("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in r) + "</tr>" for r in rows[1:])
+        inner = f"<table><thead><tr>{thead}</tr></thead><tbody>{trs}</tbody></table>"
+    else:
+        inner = f'<img src="{alt}" alt="" style="width:100%">' if alt else ""
     return (
         f'<div class="{cls}">\n<div class="tcap"><span class="lab">{lab}</span>'
         f'<span class="ttl">{body}</span></div>\n{inner}\n</div>'
@@ -111,7 +118,7 @@ def to_html_blocks(doc: Doc) -> list[str]:
             out.append(f'<div class="eq"><div class="mathline"><img src="{b.image}" style="max-width:100%"></div></div>')
         elif b.kind == "caption" and b.image:
             out.append(_figure(b, b.image))
-        elif b.kind == "table" and b.image:
+        elif b.kind == "table" and (b.image or b.meta.get("table_data")):
             out.append(_table(b, b.image))
         elif b.kind == "refs":
             out.append(f'<h2 class="reftitle">{_e(text)}</h2>')
