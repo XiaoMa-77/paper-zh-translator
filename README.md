@@ -6,7 +6,7 @@
 
 本地命令行工具：没有服务端、没有数据库，除调用模型翻译那一步外不联网。
 
-![输出示例](docs/preview.png)
+![原文与译文对比](docs/compare.png)
 
 ---
 
@@ -73,18 +73,7 @@ papertrans run paper.pdf -o build/paper --provider openai
 
 ## 工作原理
 
-```
-PDF ──▶ 抽块 ──▶ 分类（题名/摘要/标题/正文/图注/表）
-                    ├─ 图：题注上方的图形分组
-                    ├─ 表：题注下方的图形分组，无矢量线则退到带状区域
-                    └─ 公式：连续碎片并成一张图（不转写）
-                    ▼
-              LLM 分段翻译（术语表约束）
-                    ▼
-     双栏 HTML ──▶ 浏览器实测每块高度 ──▶ 块级分页
-                    ▼
-            Chromium 打印 ──▶ PDF + report.json
-```
+![工作流程](docs/pipeline.png)
 
 四个经过踩坑才定下来的决定：
 
@@ -137,7 +126,9 @@ papertrans extract paper.pdf -o build/x     # 重跑生效
 | `tests/smoke.py` | 冒烟测试，结构级 + 端到端 | 否（开发用） |
 | `tools/make_sample.py` | 生成合成样本，供演示与回归 | 否 |
 | `samples/toy-paper.pdf` | 自制合成样本（2 页双栏），不含任何他人论文 | 否 |
-| `docs/preview.png` | README 预览图，由上面的样本跑出 | 否 |
+| `docs/pipeline.png` | README 工作流程图 | 否 |
+| `docs/compare.png` | README 原译对比图，由样本真实产出 | 否 |
+| `docs/preview.png` | 早期单页预览图 | 否 |
 | `examples/glossary.example.yaml` | 术语表模板 | 否 |
 | `.github/workflows/ci.yml` | CI：ruff + 结构测试 + 样本端到端 | 否 |
 | `Dockerfile` | Linux 容器运行环境（Chromium + Noto CJK） | 否（可选） |

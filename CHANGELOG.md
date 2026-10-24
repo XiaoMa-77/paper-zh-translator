@@ -27,6 +27,7 @@
 ### 文档
 
 - README 补充翻译模型配置说明（`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 环境变量与 OpenAI 兼容端点示例）、`--style` 参数、CI 徽章。
+- 新增 README 配图：工作流程图 `docs/pipeline.png` 与原译对比图 `docs/compare.png`（对比图由自制样本经真实流水线产出）。
 
 ## [0.1.0] - 2026-10-22
 
