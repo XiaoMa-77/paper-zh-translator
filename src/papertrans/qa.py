@@ -14,6 +14,11 @@ TRANSLATABLE = {"title", "abstract", "heading1", "heading2", "body", "caption", 
 CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
+def _normnum(n: str) -> str:
+    """数字的宽松形态：去掉千分位逗号与百分号，"1,000%" -> "1000"。"""
+    return n.replace(",", "").rstrip("%")
+
+
 def check_doc(doc: Doc, source_pdf: str | None = None, rendered_pdf: str | None = None) -> dict:
     tr = [b for b in doc.blocks if b.kind in TRANSLATABLE and b.text.strip()]
     untranslated = [b.id for b in tr if not b.zh.strip()]
@@ -21,15 +26,16 @@ def check_doc(doc: Doc, source_pdf: str | None = None, rendered_pdf: str | None 
     src_chars = sum(len(b.text) for b in tr)
     cjk_ratio = (len(CJK.findall("".join(b.zh for b in tr))) / zh_chars) if zh_chars else 0.0
 
-    # 数字一致性：原文出现过的数字，译文中必须都在
+    # 数字一致性：原文出现过的数字，译文中必须都在（千分位/百分号形态差异不算缺失）
     num_src = Counter()
     num_missing: list[str] = []
     for b in tr:
         for n in NUM.findall(b.text):
             num_src[n] += 1
         if b.zh:
+            zh_nums = {_normnum(x) for x in NUM.findall(b.zh)}
             for n in NUM.findall(b.text):
-                if n not in b.zh:
+                if n not in b.zh and _normnum(n) not in zh_nums:
                     num_missing.append(f"{b.id}:{n}")
 
     report: dict = {

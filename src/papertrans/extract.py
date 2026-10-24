@@ -7,34 +7,33 @@ from __future__ import annotations
 
 import os
 import re
-import statistics
 from collections import Counter
 
 import pymupdf
 
 from .model import Block, Doc
 
-CAP_FIG = re.compile(r"^(fig\.?|figure)\s*\d+", re.I)
-CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)", re.I)
+CAP_FIG = re.compile(r"^(fig\.?|figure)\s*\d+", re.IGNORECASE)
+CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)", re.IGNORECASE)
 HEAD_NUM = re.compile(r"^(\d+(\.\d+)*\.?|[IVXLC]+\.)\s+\S")
-REF_HEAD = re.compile(r"^(references|bibliography|参考文献|r\s*e\s*f\s*e\s*r\s*e\s*n\s*c\s*e\s*s)\s*$", re.I)
+REF_HEAD = re.compile(r"^(references|bibliography|参考文献|r\s*e\s*f\s*e\s*r\s*e\s*n\s*c\s*e\s*s)\s*$", re.IGNORECASE)
 JUNK = [
-    re.compile(r"^(arxiv:\s*\d)", re.I),
-    re.compile(r"^doi[:\s]", re.I),
-    re.compile(r"^\d{4}-\d{4}\s*©", re.I),
-    re.compile(r"^authorized licensed", re.I),
-    re.compile(r"^downloaded on", re.I),
-    re.compile(r"^\d{3,4}\s+(ieee|proceedings|journal)", re.I),
-    re.compile(r"^[A-Z][A-Z\s\.]{3,}\bet al\.", re.I),
-    re.compile(r"^proceedings of the", re.I),
-    re.compile(r"^published in", re.I),
+    re.compile(r"^(arxiv:\s*\d)", re.IGNORECASE),
+    re.compile(r"^doi[:\s]", re.IGNORECASE),
+    re.compile(r"^\d{4}-\d{4}\s*©", re.IGNORECASE),
+    re.compile(r"^authorized licensed", re.IGNORECASE),
+    re.compile(r"^downloaded on", re.IGNORECASE),
+    re.compile(r"^\d{3,4}\s+(ieee|proceedings|journal)", re.IGNORECASE),
+    re.compile(r"^[A-Z][A-Z\s\.]{3,}\bet al\.", re.IGNORECASE),
+    re.compile(r"^proceedings of the", re.IGNORECASE),
+    re.compile(r"^published in", re.IGNORECASE),
     re.compile(r"^\d{1,4}$"),
 ]
 MATH_HINT = set("∈∑∏≤≥→←↔πσ∇·±×÷∞≈≠∪∩⊂⊆ℝθταβλμΔ∂√∫")
 MATH_NUM = re.compile(r"\(\s*\d+[a-z]?\s*\)\s*[,.]?$")
 RUNIN = re.compile(r"^\d+\)\s+[A-Z]")
 INLINE_HEAD = re.compile(r"^((?:[IVXLC]+\.))\s+([A-Z][A-Z\s\-]{2,58}?)\s+(?=[A-Z][a-z])")
-ABS_HEAD = re.compile(r"^abstract\b[—\-–:]?", re.I)
+ABS_HEAD = re.compile(r"^abstract\b[—\-–:]?", re.IGNORECASE)
 
 
 def _norm(text: str) -> str:
@@ -115,9 +114,7 @@ def _is_math(text: str) -> bool:
         return True
     if MATH_NUM.search(t):
         return True
-    if len(t) < 60 and re.search(r"[=:]", t) and not t.endswith("."):
-        return True
-    return False
+    return len(t) < 60 and bool(re.search(r"[=:]", t)) and not t.endswith(".")
 
 
 def box_height(g) -> float:
@@ -274,7 +271,8 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None)
     overrides = {}
     if os.path.exists(ov_path):
         import json as _json
-        overrides = _json.load(open(ov_path, encoding="utf-8"))
+        with open(ov_path, encoding="utf-8") as f:
+            overrides = _json.load(f)
 
     # 全篇正文字号
     all_spans: list[dict] = []

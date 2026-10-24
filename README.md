@@ -1,5 +1,7 @@
 # papertrans
 
+[![CI](https://github.com/XiaoMa-77/paper-zh-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/XiaoMa-77/paper-zh-translator/actions/workflows/ci.yml)
+
 把英文论文 PDF 翻成中文 PDF，**保留原文的双栏版式、图表位置与编号**。
 
 本地命令行工具：没有服务端、没有数据库，除调用模型翻译那一步外不联网。
@@ -31,6 +33,20 @@ papertrans run paper.pdf -o build/paper
 papertrans run paper.pdf -o build/paper --provider none
 ```
 
+## 配置翻译模型
+
+`--provider openai` 走 OpenAI 兼容接口（OpenAI / DeepSeek / 通义 / 本地 vLLM、Ollama 的 OpenAI 端点都可以），用环境变量配置：
+
+```bash
+export LLM_BASE_URL=https://api.deepseek.com/v1   # 不设则默认 https://api.openai.com/v1
+export LLM_API_KEY=sk-xxxx
+export LLM_MODEL=deepseek-chat                    # 也可用 --model 覆盖
+
+papertrans run paper.pdf -o build/paper --provider openai
+```
+
+没有 API Key 时用 `--provider none`：不翻译、原样回填，用来验证抽取与版式。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -47,7 +63,8 @@ papertrans run paper.pdf -o build/paper --provider none
 ```bash
 --provider none|openai      # none = 不翻译，只验版面（默认）
 --model gpt-4o-mini         # 也可用 LLM_MODEL 环境变量
---glossary glossary.yaml    # 术语表，形如 ObjectNav: 物体目标导航
+--glossary glossary.yaml    # 术语表，模板见 examples/glossary.example.yaml
+--style academic            # 翻译风格，注入提示词（academic/plain 等）
 --columns 1|2               # 强制栏数，默认自动判断
 --review                    # 导出裁剪复核页
 ```
@@ -121,8 +138,11 @@ papertrans extract paper.pdf -o build/x     # 重跑生效
 | `tools/make_sample.py` | 生成合成样本，供演示与回归 | 否 |
 | `samples/toy-paper.pdf` | 自制合成样本（2 页双栏），不含任何他人论文 | 否 |
 | `docs/preview.png` | README 预览图，由上面的样本跑出 | 否 |
+| `examples/glossary.example.yaml` | 术语表模板 | 否 |
+| `.github/workflows/ci.yml` | CI：ruff + 结构测试 + 样本端到端 | 否 |
 | `Dockerfile` | Linux 容器运行环境（Chromium + Noto CJK） | 否（可选） |
 | `DESIGN.md` | 设计取舍与可行性分析的存档 | 否 |
+| `CHANGELOG.md` | 更新日志 | 否 |
 | `README.md` `LICENSE` `.gitignore` | 文档与仓库配置 | 否 |
 
 **不提交的内容**（见 `.gitignore`）：`build/`、`__pycache__/`、`.venv/`、`*.zh.pdf`、`overrides.json`、`samples/demo/`、日志、`.idea/`、`.vscode/`、系统临时文件。仓库里只有源码、打包配置和一份自制样本，克隆下来即可运行。

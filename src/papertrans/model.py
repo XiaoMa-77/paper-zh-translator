@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 Kind = Literal["title", "authors", "abstract", "heading1", "heading2", "body", "caption", "table", "figure", "equation", "refs", "unknown"]
@@ -57,7 +57,7 @@ class Doc:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=1)
 
     @classmethod
-    def load(cls, path: str) -> "Doc":
+    def load(cls, path: str) -> Doc:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         doc = cls(source=data["source"], page_size=tuple(data["page_size"]),

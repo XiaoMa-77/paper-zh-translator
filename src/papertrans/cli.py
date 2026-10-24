@@ -19,6 +19,27 @@ def _workdir(arg: str | None, pdf: str) -> str:
     return arg or os.path.join("build", os.path.splitext(os.path.basename(pdf))[0])
 
 
+def _load_glossary(path: str | None) -> dict:
+    if not path:
+        return {}
+    if not os.path.exists(path):
+        raise RuntimeError(f"术语表不存在：{path}（路径写错时不静默跳过，否则术语约束会悄悄失效）")
+    import yaml
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _finish_pdf(doc: Doc, blocks: list[str], wd: str, output: str | None) -> tuple[str, int]:
+    """分页 → 写 final.html → 打印 PDF。run 与 build 共用，正文只组装一次。"""
+    body, pages = paginate.build_pages(blocks, build.CSS, wd)
+    html_path = os.path.join(wd, "final.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(build.document([body], os.path.basename(doc.source)))
+    out_pdf = output or os.path.join(wd, os.path.splitext(os.path.basename(doc.source))[0] + ".zh.pdf")
+    render.print_pdf(html_path, out_pdf)
+    return out_pdf, pages
+
+
 def cmd_extract(args) -> int:
     wd = _workdir(args.out, args.pdf)
     os.makedirs(wd, exist_ok=True)
@@ -35,10 +56,7 @@ def cmd_extract(args) -> int:
 def cmd_translate(args) -> int:
     wd = args.workdir
     doc = Doc.load(os.path.join(wd, "doc.json"))
-    glossary = {}
-    if args.glossary and os.path.exists(args.glossary):
-        import yaml
-        glossary = yaml.safe_load(open(args.glossary, encoding="utf-8")) or {}
+    glossary = _load_glossary(args.glossary)
     provider = translate.get_provider(args.provider, model=args.model)
     t0 = time.time()
     stats = translate.translate_doc(doc, provider, glossary, args.style)
@@ -55,12 +73,7 @@ def cmd_build(args) -> int:
     if args.preview_only:
         print(build.write_preview(doc, wd, blocks))
         return 0
-    body, pages = paginate.build_pages(blocks, build.CSS, wd)
-    html_path = os.path.join(wd, "final.html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(build.document(body.split("\n"), os.path.basename(doc.source)).replace("</body>", body + "</body>"))
-    out_pdf = args.output or os.path.join(wd, os.path.splitext(os.path.basename(doc.source))[0] + ".zh.pdf")
-    render.print_pdf(html_path, out_pdf)
+    out_pdf, pages = _finish_pdf(doc, blocks, wd, args.output)
     report = qa.check_doc(doc, doc.source, out_pdf)
     report["pages"] = pages
     with open(os.path.join(wd, "report.json"), "w", encoding="utf-8") as f:
@@ -77,22 +90,12 @@ def cmd_run(args) -> int:
     doc.save(os.path.join(wd, "doc.json"))
     if getattr(args, "review", False):
         review.write_review(doc, wd)
-    glossary = {}
-    if args.glossary and os.path.exists(args.glossary):
-        import yaml
-        glossary = yaml.safe_load(open(args.glossary, encoding="utf-8")) or {}
+    glossary = _load_glossary(args.glossary)
     provider = translate.get_provider(args.provider, model=args.model)
     translate.translate_doc(doc, provider, glossary, args.style)
     doc.save(os.path.join(wd, "doc.json"))
 
-    blocks = build.to_html_blocks(doc)
-    body, pages = paginate.build_pages(blocks, build.CSS, wd)
-    html_path = os.path.join(wd, "final.html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write("<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
-                f"<style>{build.CSS}</style></head><body>\n{body}\n</body></html>\n")
-    out_pdf = args.output or os.path.join(wd, os.path.basename(args.pdf).replace(".pdf", ".zh.pdf"))
-    render.print_pdf(html_path, out_pdf)
+    out_pdf, pages = _finish_pdf(doc, build.to_html_blocks(doc), wd, args.output)
     report = qa.check_doc(doc, args.pdf, out_pdf)
     report["pages"] = pages
     with open(os.path.join(wd, "report.json"), "w", encoding="utf-8") as f:
@@ -111,7 +114,8 @@ def cmd_doctor(args) -> int:
     rows.append(("python", platform.python_version(), True))
     try:
         import pymupdf
-        rows.append(("pymupdf", pymupdf.__doc__.split()[1] if pymupdf.__doc__ else "ok", True))
+        ver = getattr(pymupdf, "VersionBind", "") or (pymupdf.__doc__.split()[1] if pymupdf.__doc__ else "ok")
+        rows.append(("pymupdf", ver, True))
     except Exception as exc:
         rows.append(("pymupdf", str(exc), False))
     try:
@@ -147,7 +151,8 @@ def cmd_report(args) -> int:
     if not os.path.exists(path):
         print("没有 report.json，请先 build", file=sys.stderr)
         return 2
-    print(open(path, encoding="utf-8").read())
+    with open(path, encoding="utf-8") as f:
+        print(f.read())
     return 0
 
 

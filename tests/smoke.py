@@ -16,8 +16,8 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from papertrans import build, paginate, extract  # noqa: E402
-from papertrans.model import Block  # noqa: E402
+from papertrans import build, paginate
+from papertrans.model import Block
 
 
 def check(cond: bool, msg: str) -> None:
@@ -59,7 +59,8 @@ def e2e(pdf: str) -> None:
                        capture_output=True, text=True, encoding="utf-8", env=env)
     print("  " + (r.stdout or r.stderr).strip()[:300])
     check(os.path.exists(out), "产出 PDF")
-    rep = json.load(open(os.path.join(wd, "report.json"), encoding="utf-8"))
+    with open(os.path.join(wd, "report.json"), encoding="utf-8") as f:
+        rep = json.load(f)
     check(rep["coverage"] >= 0.99, f"译文覆盖率 {rep['coverage']}")
     check(rep["pages_output"] >= 1, f"页数 {rep['pages_output']}")
     check(not rep.get("overflow_pages"), "无版心溢出")

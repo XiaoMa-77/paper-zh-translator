@@ -57,8 +57,17 @@ class OpenAIProvider(Provider):
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
         )
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            return json.loads(resp.read().decode())
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            body = exc.read(400).decode("utf-8", "ignore")
+            raise RuntimeError(f"LLM 接口返回 HTTP {exc.code}：{body[:200]}") from None
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"连不上 LLM 接口 {self.base_url}：{exc.reason}。"
+                "请检查 LLM_BASE_URL / LLM_API_KEY 与网络（代理）设置"
+            ) from None
 
     def translate(self, items, glossary, style="academic"):
         gl = "\n".join(f"- {k} => {v}" for k, v in glossary.items()) or "（无）"
@@ -75,10 +84,13 @@ class OpenAIProvider(Provider):
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
         })
         content = data["choices"][0]["message"]["content"]
-        m = re.search(r"\{.*\}", content, re.S)
+        m = re.search(r"\{.*\}", content, re.DOTALL)
         if not m:
             raise RuntimeError(f"模型未返回 JSON：{content[:200]}")
-        parsed = json.loads(m.group(0))
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"模型返回的 JSON 解析失败（{exc}）：{m.group(0)[:200]}") from None
         return {str(x["id"]): str(x["zh"]) for x in parsed.get("translations", [])}
 
 
@@ -111,20 +123,26 @@ def segment(blocks: list[Block], limit: int = 1500) -> list[list[Block]]:
 
 
 def translate_doc(doc: Doc, provider: Provider, glossary: dict[str, str] | None = None,
-                  style: str = "academic", limit: int = 1500) -> dict:
+                  style: str = "academic", limit: int = 1500, retries: int = 1) -> dict:
+    """翻译全篇。模型偶尔会漏掉一两个块，retries 轮只补译空缺，不重复消耗已译内容。"""
     glossary = glossary or {}
-    done = 0
-    for chunk in segment(doc.blocks, limit):
-        items = [(b.id, b.text) for b in chunk]
-        got = provider.translate(items, glossary, style)
-        for b in chunk:
-            b.zh = got.get(b.id, "")
-            if b.zh:
-                done += 1
-    missing = [b.id for b in doc.blocks if b.kind in {"title", "abstract", "heading1", "heading2", "body", "caption", "table"} and not b.zh]
+    targets = [b for b in doc.blocks
+               if b.kind in {"title", "abstract", "heading1", "heading2", "body", "caption", "table"}
+               and b.text.strip()]
+    for _round in range(retries + 1):
+        todo = [b for b in targets if not b.zh]
+        if not todo:
+            break
+        for chunk in segment(todo, limit):
+            items = [(b.id, b.text) for b in chunk]
+            got = provider.translate(items, glossary, style)
+            for b in chunk:
+                b.zh = got.get(b.id, "") or b.zh
+    done = sum(1 for b in targets if b.zh)
+    missing = [b.id for b in targets if not b.zh]
     hit = 0
     total = 0
-    for k, v in glossary.items():
+    for v in glossary.values():
         total += 1
         if any(v in b.zh for b in doc.blocks if b.zh):
             hit += 1

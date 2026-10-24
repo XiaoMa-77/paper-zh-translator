@@ -6,8 +6,6 @@ Chromium 在分页边界会把后续内容挤到下一页，留下大片空白�
 
 from __future__ import annotations
 
-import os
-
 from .render import measure_blocks
 
 COLCAP = 676.0

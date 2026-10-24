@@ -65,7 +65,7 @@ def _e(text: str) -> str:
 def _figure(b: Block, alt: str) -> str:
     cls = "full" if (b.full_width or b.width > 300) else ""
     cap = _e(b.zh or b.text)
-    m = re.match(r"^((?:fig\.?|figure)\s*\d+[.:]?)\s*(.*)$", cap, re.I)
+    m = re.match(r"^((?:fig\.?|figure)\s*\d+[.:]?)\s*(.*)$", cap, re.IGNORECASE)
     lab, body = (m.group(1), m.group(2)) if m else ("", cap)
     return (
         f'<figure class="{cls}">\n<img src="{alt}" alt="">\n'
@@ -76,7 +76,7 @@ def _figure(b: Block, alt: str) -> str:
 def _table(b: Block, alt: str) -> str:
     cls = "tabwrap" + (" full" if (b.full_width or b.width > 300) else "")
     cap = _e(b.zh or b.text)
-    m = re.match(r"^((?:table|tab\.)\s*[ivxlcdm\d]+[.:]?)\s*(.*)$", cap, re.I)
+    m = re.match(r"^((?:table|tab\.)\s*[ivxlcdm\d]+[.:]?)\s*(.*)$", cap, re.IGNORECASE)
     lab, body = (m.group(1), m.group(2)) if m else ("", cap)
     inner = f'<img src="{alt}" alt="" style="width:100%">' if alt else ""
     return (

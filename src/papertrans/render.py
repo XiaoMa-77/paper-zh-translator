@@ -9,7 +9,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 
 CANDIDATES = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -80,7 +79,7 @@ def measure_blocks(blocks: list[str], css: str, workdir: str,
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
     dom = dump_dom(tmp)
-    m = re.search(r'<pre id="out">(.*?)</pre>', dom, re.S)
+    m = re.search(r'<pre id="out">(.*?)</pre>', dom, re.DOTALL)
     if not m:
         raise RuntimeError("测高失败：浏览器未返回测量结果")
     import json

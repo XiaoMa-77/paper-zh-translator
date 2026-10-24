@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papertrans"
-version = "0.1.0"
+version = "0.2.0"
 description = "PDF 论文中文翻译：保持双栏版式、公式与表格"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,3 +24,10 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# 以下规则与本项目的容错风格冲突，显式关闭：
+# BLE001/S110 —— 渲染兜底路径宁可跳过也不能让一次失败带崩整篇（doctor 需要报告任何导入错误）
+# ISC004 —— 样本生成器里成段的隐式字符串拼接是刻意的排版写法
+# PLW1510 —— 渲染层以"产物是否存在"判断成败，浏览器进程偶尔返回非零码但产物正常
+ignore = ["BLE001", "S110", "ISC004", "PLW1510"]

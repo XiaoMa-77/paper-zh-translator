@@ -1,0 +1,15 @@
+# 术语表模板 —— 复制改名后在 translate / run 时用 --glossary 指定。
+#
+# - 键：原文中的英文术语（区分大小写），会注入系统提示约束译法；
+# - 值：固定中文译法，全篇统一；
+# - 命中情况会统计进 report 的 glossary_hit（如 4/5 表示 5 条术语有 4 条出现在译文里）。
+# - 没把握的术语可以不译，写回英文本身：some-term: some-term
+
+ObjectNav: 物体目标导航
+vision-language model: 视觉-语言模型
+reinforcement learning: 强化学习
+foundation model: 基础模型
+emergent ability: 涌现能力
+in-context learning: 上下文学习
+chain-of-thought: 思维链
+retrieval-augmented generation: 检索增强生成

@@ -125,9 +125,9 @@ def build() -> str:
                  color=(0.2, 0.2, 0.2), width=1.2)
     p1.insert_text((fig.x0 + 8, fig.y0 + 16), "agent", fontname="helv", fontsize=7.5)
     p1.insert_text((fig.x0 + 126, fig.y0 + 22), "memory", fontname="helv", fontsize=7.5)
-    cap_y = draw_par(p1, RIGHT, fig.y1 + 12,
-                     "Fig. 1: A schematic figure that must stay above its own caption after "
-                     "reflowing.", size=7.8, lead=9.6, font="heit")
+    draw_par(p1, RIGHT, fig.y1 + 12,
+             "Fig. 1: A schematic figure that must stay above its own caption after "
+             "reflowing.", size=7.8, lead=9.6, font="heit")
 
     # 第二页：表格 + 公式 + 结果 + 参考文献
     p2 = doc.new_page(width=W, height=H)
