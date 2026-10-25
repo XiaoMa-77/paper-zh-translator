@@ -6,6 +6,6 @@
 3. 任何"看起来对"的产物都要有质检证据（report.json），否则视为失败。
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .model import Block, Doc  # noqa: F401

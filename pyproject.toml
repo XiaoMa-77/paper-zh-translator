@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "papertrans"
-version = "0.3.0"
+version = "0.3.1"
 description = "PDF 论文中文翻译：保持双栏版式、公式与表格"
 readme = "README.md"
 license = "MIT"
