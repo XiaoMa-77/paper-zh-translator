@@ -13,8 +13,8 @@ import pymupdf
 
 from .model import Block, Doc
 
-CAP_FIG = re.compile(r"^(fig\.?|figure)\s*\d+", re.IGNORECASE)
-CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)", re.IGNORECASE)
+CAP_FIG = re.compile(r"^(fig\.?|figure)\s*\d+\s*[.:]", re.IGNORECASE)
+CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)\s*[.:]", re.IGNORECASE)
 HEAD_NUM = re.compile(r"^(\d+(\.\d+)*\.?|[IVXLC]+\.)\s+\S")
 REF_HEAD = re.compile(r"^(references|bibliography|参考文献|r\s*e\s*f\s*e\s*r\s*e\s*n\s*c\s*e\s*s)\s*$", re.IGNORECASE)
 JUNK = [
@@ -112,6 +112,10 @@ def _is_math(text: str) -> bool:
         return False                      # 图里的点阵/装饰，不是公式
     if any(ch in MATH_HINT for ch in t):
         return True
+    # 一行普通英文（4 个以上单词）哪怕带 "=" 也不是公式：
+    # "i=1 and object features {oi}m i=1." 这种碎片曾被裁成一张公式图
+    if len(re.findall(r"[A-Za-z]{2,}", t)) >= 4:
+        return False
     if MATH_NUM.search(t):
         return True
     return len(t) < 60 and bool(re.search(r"[=:]", t)) and not t.endswith(".")
@@ -148,6 +152,9 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
     # 公式常被 PDF 拆成"符号块 + 极短文字块"，把紧邻的短块一并并入图片
     def _absorb(g):
         ext = list(g)
+        # 整行正文的纵向区间：落在正文行上的碎片属于那行文字，不属于公式
+        prose = [(x.y0, x.y1) for x in result.blocks
+                 if x.page == g[0].page and len(x.text.strip()) > 60]
         changed = True
         while changed:
             changed = False
@@ -156,6 +163,8 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
                 if b in ext or b.image or b.page != g[0].page or b.col != g[0].col:
                     continue
                 if len(b.text.strip()) > 28:
+                    continue
+                if any(min(b.y1, y1) - max(b.y0, y0) > 0.5 * (b.y1 - b.y0) for y0, y1 in prose):
                     continue
                 if b.y1 > top - 14 and b.y1 < top + 2 or b.y0 < bot + 14 and b.y0 > bot - 2:
                     ext.append(b)
@@ -178,6 +187,12 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
         for b in g[1:]:
             box |= pymupdf.Rect(b.x0, b.y0, b.x1, b.y1)
         box = pymupdf.Rect(box.x0 - 2, box.y0 - 2, box.x1 + 2, box.y1 + 2) & doc[g[0].page].rect
+        # 分段函数/多行公式常被切成两块，下边界会横穿第二行，把边界让到那一行的底
+        cut = [x for x in result.blocks
+               if x.page == g[0].page and x.kind == "body" and len(x.text.strip()) <= 60
+               and x.y0 < box.y1 - 1 and x.y1 > box.y1 + 1]
+        if cut:
+            box = pymupdf.Rect(box.x0, box.y0, box.x1, max(x.y1 for x in cut) + 1)
         if box.height < 8:
             continue
         n += 1
@@ -191,6 +206,9 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
             result.blocks.remove(b)
         result.blocks.insert(idx, eqb)
         result.assets[eqb.id] = rel
+        if boxes is not None:
+            # 公式框内的文字已经进了图片，留着只会变成正文里的乱码碎片
+            boxes.setdefault(eqb.page, []).append(box)
 
 
 def _span_size(page_spans, rect) -> float:
@@ -251,6 +269,29 @@ def _figure_box(rects: list[pymupdf.Rect], clip: pymupdf.Rect,
         box |= r
     box = box & clip & page_rect
     return box if box.height > 24 and box.width > 40 else clip
+
+
+def _caption_scope(x0: float, x1: float, pw: float, mid: float) -> int:
+    """题注归属：-1 跨栏居中，0 左栏，1 右栏。
+
+    逐栏排版里，栏内题注左缘贴着栏边；跨栏图表题注居中于整页。
+    只看"宽度是否过半页"会误判——窄而居中的题注对应的是整幅宽的图表。
+    """
+    cx = (x0 + x1) / 2
+    if abs(cx - pw / 2) < 0.12 * pw:
+        return -1
+    left_c = (45 + mid - 6) / 2
+    right_c = (mid + 6 + pw - 45) / 2
+    return 0 if abs(cx - left_c) <= abs(cx - right_c) else 1
+
+
+def _clip_scope(box: pymupdf.Rect, scope: int, pw: float, mid: float) -> pymupdf.Rect:
+    """把裁剪框收进所属栏，避免把邻栏正文烘进图片。"""
+    if scope == 0:
+        return pymupdf.Rect(max(box.x0, 45), box.y0, min(box.x1, mid - 6), box.y1)
+    if scope == 1:
+        return pymupdf.Rect(max(box.x0, mid + 6), box.y0, min(box.x1, pw - 45), box.y1)
+    return box
 
 
 def _table_rows(page_pl, box: pymupdf.Rect) -> list[list[str]] | None:
@@ -372,15 +413,25 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                 above = [g for g in groups if y0 - 30 <= g.y1 <= y0 + 6]
                 if above:
                     box = max(above, key=lambda g: g.y1)
-                    # 向上吸附到相邻组，拼回被切开的整图
-                    for g in sorted([x for x in groups if x.y1 < box.y0 + 4], key=lambda x: -x.y1):
+                    # 向上吸附到相邻组，拼回被切开的整图。
+                    # 条件按 y0 判、不按 y1：示意图的图例带常与上方图元纵向重叠，
+                    # 用 y1 判断会把整张图拦腰截断，只剩最下面一条图例。
+                    for g in sorted([x for x in groups if x.y0 < box.y0 - 1],
+                                    key=lambda x: -x.y1):
                         if box.y0 - g.y1 <= 24:
                             box |= g
                         else:
                             break
                 else:
                     top = max(40, y0 - 300)
-                    body_above = [r[3] for r in raw if r[3] < y0 - 2 and r[3] > top
+                    # 只认同栏的文字块：邻栏段落的结尾不是这张图的上边界，
+                    # 否则会把半张图连同邻栏正文一起裁成一条
+                    if cols == 1:
+                        same_col = raw
+                    else:
+                        lo, hi = (45, mid) if (x0 + x1) / 2 < mid else (mid, pw - 45)
+                        same_col = [r for r in raw if lo <= (r[0] + r[2]) / 2 <= hi]
+                    body_above = [r[3] for r in same_col if r[3] < y0 - 2 and r[3] > top
                                   and len(r[4].strip()) > 60 and _span_size(page_spans, r) >= body * 0.9]
                     if body_above:
                         top = max(body_above) + 3
@@ -389,9 +440,15 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                     box = pymupdf.Rect(box.x0, y0 - 340, box.x1, y0 - 2)
                 if blk.id in overrides:
                     box = pymupdf.Rect(*overrides[blk.id])
-                if box.width > 0.55 * pw:                     # 宽图统一给整幅页宽
-                    box = pymupdf.Rect(45, box.y0, pw - 45, box.y1)
-                    blk.full_width = True
+                else:
+                    scope = _caption_scope(x0, x1, pw, mid)
+                    if scope == -1:
+                        if box.width > 0.55 * pw:                 # 宽图统一给整幅页宽
+                            box = pymupdf.Rect(45, box.y0, pw - 45, box.y1)
+                            blk.full_width = True
+                    else:
+                        box = _clip_scope(box, scope, pw, mid)
+                        blk.full_width = False
                 fig_no += 1
                 rel = f"fig/fig{fig_no}.png"
                 pix = page.get_pixmap(clip=box, dpi=dpi)
@@ -404,22 +461,42 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
             # 表：题注下方区域。auto 模式先尝试 pdfplumber 重建为可编辑表格，
             # 置信度不足（无横线/行列太少/格子太空）则回退为整图
             if kind == "table":
+                scope = _caption_scope(x0, x1, pw, mid)
+                # 下边界不能越过下一张图/表的题注，否则两张表会互相重叠
+                nxt_cap = [r[1] for r in raw[i + 1:] if r[1] > y1 + 4
+                           and (CAP_FIG.match(_norm(r[4])) or CAP_TAB.match(_norm(r[4])))]
+                limit = min(nxt_cap) - 2 if nxt_cap else None
                 groups = [g for g in _group_rects(graphics) if g.height > 24]
                 below = [g for g in groups if y1 - 2 <= g.y0 <= y1 + 26]
                 if below:                                     # 只接受紧贴题注下方的成组图形
                     box = min(below, key=lambda g: g.y0)
                     if box.height > 420:
                         box = pymupdf.Rect(box.x0, box.y0, box.x1, box.y0 + 420)
-                    if box.width > 0.55 * pw:
-                        box = pymupdf.Rect(45, box.y0, pw - 45, box.y1)
-                        blk.full_width = True
+                    if limit:
+                        box = pymupdf.Rect(box.x0, box.y0, box.x1, min(box.y1, limit))
+                    if scope == -1:
+                        if box.width > 0.55 * pw:
+                            box = pymupdf.Rect(45, box.y0, pw - 45, box.y1)
+                            blk.full_width = True
+                    else:
+                        box = _clip_scope(box, scope, pw, mid)
+                        blk.full_width = False
                 else:                                         # 无矢量线时退到"题注到下一段正文"的带状区域
                     nxt = [r[1] for r in raw[i + 1:] if r[1] > y1 + 4
                            and _span_size(page_spans, r) >= body * 0.9]
                     bottom = (min(nxt) - 2) if nxt else min(y1 + 220, page.rect.height - 40)
-                    narrow = (x1 - x0) < 0.55 * pw
-                    x_lo, x_hi = ((45, mid) if (narrow and x0 < mid) else (mid, pw - 45)) if narrow else (45, pw - 45)
-                    box = pymupdf.Rect(x_lo, y1 + 2, x_hi, bottom if bottom - y1 > 28 else min(y1 + 200, page.rect.height - 40))
+                    if limit:
+                        bottom = min(bottom, limit)
+                    if scope == 0:
+                        x_lo, x_hi = 45, mid - 6
+                    elif scope == 1:
+                        x_lo, x_hi = mid + 6, pw - 45
+                    else:
+                        x_lo, x_hi = 45, pw - 45
+                        blk.full_width = True
+                    box = pymupdf.Rect(x_lo, y1 + 2, x_hi,
+                                       bottom if bottom - y1 > 28
+                                       else min(y1 + 200, page.rect.height - 40))
                 tab_no += 1
                 rows = None
                 if tables == "auto":
@@ -447,7 +524,7 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
             result.blocks.append(blk)
 
     _extract_equations(result, doc, out_dir, dpi, boxes)
-    result.blocks = _postprocess(result.blocks, body, boxes)
+    result.blocks = _postprocess(result.blocks, body, boxes, result.page_size[1])
     for n, b in enumerate(result.blocks):
         b.id = f"b{n:04d}"
     if plumber:
@@ -455,7 +532,47 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
     return result
 
 
-def _postprocess(blocks: list[Block], body: float, boxes: dict | None = None) -> list[Block]:
+def _merge_fragments(blocks: list[Block]) -> list[Block]:
+    """把被行内公式切断的正文碎片拼回段落。
+
+    行内公式常是 Type3 字体，PyMuPDF 抽不出字符，于是同一段被切成几块，
+    每块都以 "i=1 denotes ..." 这种孤儿片段开头。判定依据是垂直区间重叠：
+    PyMuPDF 的正常段落块之间不会重叠，只有被抽掉公式的行才会。
+    """
+    out: list[Block] = []
+    for b in blocks:
+        p = out[-1] if out else None
+        if (p is not None and b.kind == "body" and p.kind == "body"
+                and b.page == p.page and b.col == p.col
+                and b.y0 < p.y1 - 1.0 and b.y1 > p.y1 + 1.0):
+            p.text = (p.text.rstrip() + " " + b.text.lstrip()).strip()
+            p.y1 = max(p.y1, b.y1)
+            p.x1 = max(p.x1, b.x1)
+            continue
+        out.append(b)
+    return out
+
+
+REF_ITEM = re.compile(r"^\[\d+\]")
+
+
+def _merge_refs(blocks: list[Block]) -> list[Block]:
+    """参考文献按条目合并：一条文献常被拆成两三块，逐块渲染会散成断行。"""
+    out: list[Block] = []
+    for b in blocks:
+        p = out[-1] if out else None
+        if (p is not None and b.kind == "refs" and p.kind == "refs"
+                and not REF_ITEM.match(b.text) and b.page == p.page and b.col == p.col):
+            p.text = (p.text.rstrip() + " " + b.text.lstrip()).strip()
+            p.y1 = max(p.y1, b.y1)
+            p.x1 = max(p.x1, b.x1)
+            continue
+        out.append(b)
+    return out
+
+
+def _postprocess(blocks: list[Block], body: float, boxes: dict | None = None,
+                 page_h: float = 792.0) -> list[Block]:
     """清洗：去页眉页脚/arXiv 戳/版权行，拆出内联标题，识别摘要与题名。"""
     kept: list[Block] = []
     for b in blocks:
@@ -464,6 +581,10 @@ def _postprocess(blocks: list[Block], body: float, boxes: dict | None = None) ->
             continue
         t = b.text
         if any(p.match(t) for p in JUNK):
+            continue
+        # 页边残留：竖排 arXiv 戳与页码会被 PyMuPDF 并成 "216538" 这种纯数字块
+        digit_like = re.fullmatch(r"\d{1,7}", t) or re.fullmatch(r"\d{1,2}\s+\d{4,6}", t)
+        if digit_like and (b.y1 > page_h * 0.88 or b.y0 < page_h * 0.08):
             continue
         if len(t) < 3:
             continue
@@ -514,4 +635,16 @@ def _postprocess(blocks: list[Block], body: float, boxes: dict | None = None) ->
             nxt = kept[idx + 1]
             if nxt.size >= body * 0.95 and len(nxt.text) < 300 and not nxt.text.endswith("."):
                 nxt.kind = "authors"
-    return kept
+
+    # 摘要标签与摘要正文常被拆成两块（"Abstract—" 一块、正文一块），
+    # 只留标签会渲染出一个空的 "Abstract—"，正文也拿不到摘要样式。
+    fixed: list[Block] = []
+    for b in kept:
+        if (fixed and fixed[-1].kind == "abstract" and not fixed[-1].text.strip()
+                and b.kind == "body" and b.page == fixed[-1].page
+                and b.y0 - fixed[-1].y0 < 40):
+            b.kind = "abstract"
+            b.y0 = min(b.y0, fixed.pop().y0)
+        fixed.append(b)
+    kept = [b for b in fixed if not (b.kind == "abstract" and not b.text.strip())]
+    return _merge_refs(_merge_fragments(kept))

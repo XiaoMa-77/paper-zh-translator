@@ -73,6 +73,17 @@ def _figure(b: Block, alt: str) -> str:
     )
 
 
+def _img_style(b: Block) -> str:
+    """图片按它在 PDF 里的物理宽度显示，别把窄公式拉满栏宽。
+
+    截图是 320dpi 的位图，不给 width 时浏览器按内在尺寸排版，
+    窄公式会被放大两三倍，"where a_t" 这种行内碎片能占掉四行。
+    """
+    cap = 514.0 if b.full_width else 250.5
+    w = min(b.width + 4, cap) if b.width > 1 else cap
+    return f"width:{w:.1f}pt;max-width:100%;height:auto"
+
+
 def _table(b: Block, alt: str) -> str:
     cls = "tabwrap" + (" full" if (b.full_width or b.width > 300) else "")
     cap = _e(b.zh or b.text)
@@ -85,7 +96,7 @@ def _table(b: Block, alt: str) -> str:
         trs = "".join("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in r) + "</tr>" for r in rows[1:])
         inner = f"<table><thead><tr>{thead}</tr></thead><tbody>{trs}</tbody></table>"
     else:
-        inner = f'<img src="{alt}" alt="" style="width:100%">' if alt else ""
+        inner = f'<img src="{alt}" alt="" style="{_img_style(b)}">' if alt else ""
     return (
         f'<div class="{cls}">\n<div class="tcap"><span class="lab">{lab}</span>'
         f'<span class="ttl">{body}</span></div>\n{inner}\n</div>'
@@ -96,6 +107,7 @@ def to_html_blocks(doc: Doc) -> list[str]:
     """Doc -> 一串顶层 HTML 块（供分页器消费）。"""
     out: list[str] = []
     head_parts: list[str] = []
+    ref_head_done = False
 
     for b in doc.blocks:
         text = b.zh or b.text
@@ -115,13 +127,19 @@ def to_html_blocks(doc: Doc) -> list[str]:
         elif b.kind == "heading2":
             out.append(f'<h3 class="sub">{_e(text)}</h3>')
         elif b.kind == "equation" and b.image:
-            out.append(f'<div class="eq"><div class="mathline"><img src="{b.image}" style="max-width:100%"></div></div>')
+            out.append(f'<div class="eq"><div class="mathline"><img src="{b.image}" style="{_img_style(b)}"></div></div>')
         elif b.kind == "caption" and b.image:
             out.append(_figure(b, b.image))
         elif b.kind == "table" and (b.image or b.meta.get("table_data")):
             out.append(_table(b, b.image))
         elif b.kind == "refs":
-            out.append(f'<h2 class="reftitle">{_e(text)}</h2>')
+            # 只有小节标题该用 h2；条目必须用小字悬挂缩进，否则每条参考文献
+            # 都会带上标题的行间距，参考表会被撑成两倍长
+            if not ref_head_done:
+                out.append(f'<h2 class="reftitle">{_e(text)}</h2>')
+                ref_head_done = True
+            else:
+                out.append(f'<p class="refitem">{_e(text)}</p>')
         elif b.text.lstrip().startswith("•") or b.text.lstrip().startswith("-"):
             out.append(f'<p class="noind">{_e(text)}</p>')
         else:

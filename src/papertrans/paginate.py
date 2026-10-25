@@ -21,10 +21,16 @@ def paginate(blocks: list[str], heights: list[float]) -> list[list[dict]]:
     pages: list[list[dict]] = [[]]
     used = 0.0
     pending: list[tuple[str, float]] = []
-    cur = {"blocks": [], "cap": COLCAP, "total": 0.0}
+    cur = {"blocks": [], "cap": COLCAP, "total": 0.0, "hs": []}
     pages[0].append(cur)
 
     def flow_height() -> float:
+        hs = cur.get("hs") or []
+        tall = [h for h in hs if h > COLCAP * 0.4]
+        if tall:
+            # 高块（整幅图/表/公式）不可拆分，按 total/2 平衡会把它挤出容器，
+            # 而 .page 是 overflow:hidden——多出来的部分会被静默裁掉。
+            return min(cur["cap"], max(sum(tall) + 30, cur["total"] / 2 + 10))
         return min(cur["cap"], cur["total"] / 2 + 10)
 
     def close_flow() -> None:
@@ -37,7 +43,7 @@ def paginate(blocks: list[str], heights: list[float]) -> list[list[dict]]:
 
     def start_flow() -> None:
         nonlocal cur
-        cur = {"blocks": [], "cap": COLCAP - used, "total": 0.0}
+        cur = {"blocks": [], "cap": COLCAP - used, "total": 0.0, "hs": []}
         pages[-1].append(cur)
 
     def new_page(flush: bool = True) -> None:
@@ -46,7 +52,7 @@ def paginate(blocks: list[str], heights: list[float]) -> list[list[dict]]:
             close_flow()
         pages.append([])
         used = 0.0
-        cur = {"blocks": [], "cap": COLCAP, "total": 0.0}
+        cur = {"blocks": [], "cap": COLCAP, "total": 0.0, "hs": []}
         pages[-1].append(cur)
         if flush and pending:
             b, h = pending.pop(0)
@@ -65,14 +71,23 @@ def paginate(blocks: list[str], heights: list[float]) -> list[list[dict]]:
             else:
                 pending.append((b, h))
         else:
+            if h > cur["cap"] * 0.4 and cur["blocks"]:
+                close_flow()
+                # 单块比剩余栏高还高，塞进小流里会被 .page 的 overflow:hidden 裁掉
+                if h > COLCAP - used:
+                    new_page()
+                else:
+                    start_flow()
             cap2 = 2 * cur["cap"] - EPS
             if cur["total"] + h <= cap2:
                 cur["blocks"].append(b)
                 cur["total"] += h
+                cur["hs"].append(h)
             else:
                 new_page()
                 cur["blocks"].append(b)
                 cur["total"] += h
+                cur["hs"].append(h)
 
     if cur["blocks"]:
         cur["h"] = flow_height()
