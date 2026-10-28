@@ -1,8 +1,7 @@
+import pymupdf
 import pytest
 
-from papertrans.extract import CAP_TAB
-from papertrans.extract import _ruled_table_box
-import pymupdf
+from papertrans.extract import CAP_TAB, _ruled_table_box
 
 
 @pytest.mark.parametrize("label", ["I", "II", "III", "IV", "1"])

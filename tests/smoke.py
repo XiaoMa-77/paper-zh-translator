@@ -16,10 +16,6 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from papertrans import build, paginate  # noqa: E402 -- bootstrap local src before importing
-from papertrans.model import Block  # noqa: E402
-
-
 def check(cond: bool, msg: str) -> None:
     print(("  ok   " if cond else "  FAIL ") + msg)
     if not cond:
@@ -27,6 +23,9 @@ def check(cond: bool, msg: str) -> None:
 
 
 def structural() -> None:
+    from papertrans import build, paginate
+    from papertrans.model import Block
+
     print("[1] 结构检查")
     # 分页器：空输入不崩
     pages = paginate.paginate([], [])

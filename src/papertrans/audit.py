@@ -221,7 +221,7 @@ def _review_json(provider, system: str, data) -> dict:
     response = provider._post(payload)
     content = response["choices"][0]["message"]["content"]
     if not isinstance(content, str):
-        raise ValueError("复核返回的内容不是文本")
+        raise TypeError("复核返回的内容不是文本")
     content = content.strip()
     if content.startswith("<think>"):
         _, closed, content = content.partition("</think>")
@@ -230,7 +230,7 @@ def _review_json(provider, system: str, data) -> dict:
     match = re.search(r"\{.*\}", content, re.DOTALL)
     parsed = json.loads(match.group() if match else content)
     if not isinstance(parsed, dict):
-        raise ValueError("复核返回的 JSON 必须是对象")
+        raise TypeError("复核返回的 JSON 必须是对象")
     return parsed
 
 

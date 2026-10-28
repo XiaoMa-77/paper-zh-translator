@@ -1,5 +1,6 @@
-import pymupdf
 import re
+
+import pymupdf
 
 from papertrans import extract
 from papertrans.model import Block, Doc
