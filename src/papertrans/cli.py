@@ -11,7 +11,7 @@ import os
 import sys
 import time
 
-from . import __version__, build, extract, paginate, qa, render, review, translate
+from . import __version__, audit, build, extract, paginate, qa, render, review, translate
 from .model import Doc
 
 
@@ -31,6 +31,10 @@ def _load_glossary(path: str | None) -> dict:
 
 def _finish_pdf(doc: Doc, blocks: list[str], wd: str, output: str | None) -> tuple[str, int]:
     """分页 → 写 final.html → 打印 PDF。run 与 build 共用，正文只组装一次。"""
+    doc.meta["asset_root"] = os.path.abspath(wd)
+    doc.blocks = extract._merge_refs(doc.blocks)
+    audit.review_translations(doc, checkpoint=os.path.join(wd, "doc.json"))
+    doc.save(os.path.join(wd, "doc.json"))
     body, pages = paginate.build_pages(blocks, build.CSS, wd)
     html_path = os.path.join(wd, "final.html")
     with open(html_path, "w", encoding="utf-8") as f:
@@ -60,10 +64,15 @@ def cmd_translate(args) -> int:
     provider = translate.get_provider(args.provider, model=args.model)
     t0 = time.time()
     stats = translate.translate_doc(doc, provider, glossary, args.style)
+    stats["translation_review"] = audit.review_translations(
+        doc, provider=provider if args.provider == "openai" else None,
+        checkpoint=os.path.join(wd, "doc.json"))
+    stats["source_audit"] = audit.source_check(doc)
     doc.save(os.path.join(wd, "doc.json"))
     stats["elapsed_sec"] = round(time.time() - t0, 1)
     print(json.dumps(stats, ensure_ascii=False))
-    return 0 if not stats["missing"] else 3
+    return 0 if (not stats["missing"] and stats["source_audit"]["passed"]
+                 and stats["translation_review"]["status"] in ("passed", "not_applicable")) else 3
 
 
 def cmd_build(args) -> int:

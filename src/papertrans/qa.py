@@ -7,6 +7,7 @@ from collections import Counter
 
 import pymupdf
 
+from . import audit
 from .model import Doc
 
 NUM = re.compile(r"\d+(?:[.,]\d+)*%?")
@@ -46,11 +47,22 @@ def check_doc(doc: Doc, source_pdf: str | None = None, rendered_pdf: str | None 
         "coverage": round(1 - len(untranslated) / max(1, len(tr)), 4),
         "zh_char_ratio": round(zh_chars / max(1, src_chars), 3),
         "cjk_ratio": round(cjk_ratio, 3),
+        "translation_mode": doc.meta.get("provider", "inferred"),
         "numbers_missing": num_missing[:50],
         "figures": sum(1 for b in doc.blocks if b.kind == "caption" and b.image),
         "tables": sum(1 for b in doc.blocks if b.kind == "table"),
         "headings": sum(1 for b in doc.blocks if b.kind in ("heading1", "heading2")),
+        "algorithms": sum(1 for b in doc.blocks if b.kind == "algorithm"),
+        "references": sum(bool(re.match(r"^\[\d+\]", b.text)) for b in doc.blocks if b.kind == "refs"),
     }
+    try:
+        report["source_audit"] = audit.source_check(doc, source_pdf)
+    except Exception as exc:
+        report["source_audit"] = {"passed": False, "error": str(exc)}
+    semantic = doc.meta.get("translation_review", {})
+    if semantic.get("fingerprint") != audit.translation_fingerprint(doc):
+        semantic = {"status": "stale", "reason": "原文或译文已变化，需重新复核"}
+    report["translation_review"] = semantic
 
     if source_pdf and rendered_pdf:
         try:
@@ -64,6 +76,9 @@ def check_doc(doc: Doc, source_pdf: str | None = None, rendered_pdf: str | None 
                 if blocks and max(b[3] for b in blocks) > 740:
                     over.append(f"p{i + 1}")
             report["overflow_pages"] = over
+            src.close()
+            out.close()
+            report["printed_audit"] = audit.printed_check(doc, rendered_pdf)
         except Exception as exc:                      # 渲染前的调用不阻断
             report["layout_check_error"] = str(exc)
 
@@ -71,5 +86,9 @@ def check_doc(doc: Doc, source_pdf: str | None = None, rendered_pdf: str | None 
         report["coverage"] >= 0.99
         and not report["numbers_missing"]
         and not report.get("overflow_pages")
+        and not report.get("layout_check_error")
+        and report["source_audit"]["passed"]
+        and report["translation_review"].get("status") in ("passed", "not_applicable")
+        and (not rendered_pdf or report.get("printed_audit", {}).get("passed", False))
     )
     return report

@@ -6,15 +6,14 @@ Chromium 在分页边界会把后续内容挤到下一页，留下大片空白�
 
 from __future__ import annotations
 
-from .render import measure_blocks
+from .render import is_full_width, measure_blocks
 
 COLCAP = 676.0
 EPS = 56.0
 
 
 def _is_span(block_html: str) -> bool:
-    head = block_html[:160]
-    return 'class="full' in head or 'class="head' in head
+    return is_full_width(block_html)
 
 
 def paginate(blocks: list[str], heights: list[float]) -> list[list[dict]]:
@@ -121,6 +120,51 @@ def render_pages(pages: list[list[dict]]) -> str:
 
 
 def build_pages(blocks: list[str], css: str, workdir: str) -> tuple[str, int]:
-    heights = measure_blocks(blocks, css, workdir)
-    pages = paginate(blocks, heights)
+    if not blocks:
+        return "", 0
+    spans = [block for block in blocks if _is_span(block)]
+    span_heights = iter(measure_blocks(spans, css, workdir))
+    pages: list[list[dict]] = [[]]
+    used = 0.0
+
+    def place(row: dict, height: float) -> None:
+        nonlocal used
+        if height > COLCAP:
+            raise RuntimeError("单个内容块超过整页高度，请拆分该块后重建")
+        if used + height > COLCAP:
+            pages.append([])
+            used = 0.0
+        row = {**row, "h": height, "cap": height}
+        pages[-1].append(row)
+        used += height + 2
+
+    i = 0
+    while i < len(blocks):
+        if _is_span(blocks[i]):
+            place({"span": blocks[i]}, next(span_heights) + 2)
+            i += 1
+            continue
+        end = i
+        while end < len(blocks) and not _is_span(blocks[end]):
+            end += 1
+        run = blocks[i:end]
+        start = 0
+        while start < len(run):
+            # 测量所有段落前缀的真实双栏高度，选择能填满当前剩余空间的最长前缀。
+            # 不再把一整组 flow 搬页，也不以缩字号或缩图换取空间。
+            fragments = ['<div class="full flow">' + "".join(run[start:stop]) + '</div>'
+                         for stop in range(start + 1, len(run) + 1)]
+            heights = [height + 2 for height in measure_blocks(fragments, css, workdir)]
+            available = COLCAP - used
+            fits = [n + 1 for n, height in enumerate(heights) if height <= available]
+            if not fits and used:
+                pages.append([])
+                used = 0.0
+                fits = [n + 1 for n, height in enumerate(heights) if height <= COLCAP]
+            if not fits:
+                raise RuntimeError("单个内容块超过整页高度，请拆分该块后重建")
+            count = max(fits)
+            place({"blocks": run[start:start + count]}, heights[count - 1])
+            start += count
+        i = end
     return render_pages(pages), len(pages)

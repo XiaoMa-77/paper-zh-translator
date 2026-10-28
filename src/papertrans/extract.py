@@ -8,13 +8,14 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
+from dataclasses import replace
 
 import pymupdf
 
 from .model import Block, Doc
 
 CAP_FIG = re.compile(r"^(fig\.?|figure)\s*\d+\s*[.:]", re.IGNORECASE)
-CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)\s*[.:]", re.IGNORECASE)
+CAP_TAB = re.compile(r"^(table|tab\.)\s*([ivxlcdm]+|\d+)(?=\s|[.:]|$)", re.IGNORECASE)
 HEAD_NUM = re.compile(r"^(\d+(\.\d+)*\.?|[IVXLC]+\.)\s+\S")
 REF_HEAD = re.compile(r"^(references|bibliography|参考文献|r\s*e\s*f\s*e\s*r\s*e\s*n\s*c\s*e\s*s)\s*$", re.IGNORECASE)
 JUNK = [
@@ -31,6 +32,7 @@ JUNK = [
 ]
 MATH_HINT = set("∈∑∏≤≥→←↔πσ∇·±×÷∞≈≠∪∩⊂⊆ℝθταβλμΔ∂√∫")
 MATH_NUM = re.compile(r"\(\s*\d+[a-z]?\s*\)\s*[,.]?$")
+ALGO_HEAD = re.compile(r"^Algorithm\s+\d+\b", re.IGNORECASE)
 RUNIN = re.compile(r"^\d+\)\s+[A-Z]")
 INLINE_HEAD = re.compile(r"^((?:[IVXLC]+\.))\s+([A-Z][A-Z\s\-]{2,58}?)\s+(?=[A-Z][a-z])")
 ABS_HEAD = re.compile(r"^abstract\b[—\-–:]?", re.IGNORECASE)
@@ -125,6 +127,34 @@ def box_height(g) -> float:
     return max(b.y1 for b in g) - min(b.y0 for b in g)
 
 
+def _extract_algorithms(result: Doc, doc, out_dir: str, dpi: int, boxes: dict) -> None:
+    """把带边框的算法作为完整面板保留，避免公式识别拆开伪代码。"""
+    for n, heading in enumerate([b for b in result.blocks if ALGO_HEAD.match(b.text)], 1):
+        rules = sorted([d["rect"] for d in doc[heading.page].get_drawings()
+                        if d["rect"].height <= 2 and d["rect"].width >= heading.width
+                        and abs(d["rect"].x0 - heading.x0) < 5
+                        and d["rect"].y0 >= heading.y1 - 1], key=lambda r: r.y0)
+        if len(rules) < 2 or rules[0].y0 > heading.y1 + 10:
+            continue
+        lower = next((r for r in rules[1:] if r.y0 > rules[0].y0 + 10), None)
+        if lower is None:
+            continue
+        box = pymupdf.Rect(rules[0].x0 - 1, rules[0].y0 - 1,
+                           rules[0].x1 + 1, lower.y1 + 1)
+        rel = f"fig/algorithm{n}.png"
+        doc[heading.page].get_pixmap(clip=box, dpi=dpi).save(os.path.join(out_dir, rel))
+        inside = [b for b in result.blocks if b.page == heading.page and b is not heading
+                  and box.contains(pymupdf.Point((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2))]
+        for b in inside:
+            result.blocks.remove(b)
+        panel = Block(id=heading.id + "a", page=heading.page, kind="algorithm", text="",
+                      x0=box.x0, y0=box.y0, x1=box.x1, y1=box.y1, col=heading.col,
+                      image=rel, meta={"bbox": list(box), "asset_kind": "algorithm"})
+        result.blocks.insert(result.blocks.index(heading) + 1, panel)
+        result.assets[panel.id] = rel
+        boxes.setdefault(heading.page, []).append(box)
+
+
 def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | None = None) -> None:
     """把连续的公式碎片并成一张图，避免它们散落成正文段落。"""
     def _in_box(b) -> bool:
@@ -166,7 +196,9 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
                     continue
                 if any(min(b.y1, y1) - max(b.y0, y0) > 0.5 * (b.y1 - b.y0) for y0, y1 in prose):
                     continue
-                if b.y1 > top - 14 and b.y1 < top + 2 or b.y0 < bot + 14 and b.y0 > bot - 2:
+                if (b.y0 < bot and b.y1 > top
+                        or b.y1 > top - 14 and b.y1 < top + 2
+                        or b.y0 < bot + 14 and b.y0 > bot - 2):
                     ext.append(b)
                     changed = True
         return ext
@@ -200,8 +232,9 @@ def _extract_equations(result: Doc, doc, out_dir: str, dpi: int, boxes: dict | N
         doc[g[0].page].get_pixmap(clip=box, dpi=dpi).save(os.path.join(out_dir, rel))
         first = g[0]
         eqb = Block(id=first.id, page=first.page, kind="equation", text="", x0=box.x0, y0=box.y0,
-                    x1=box.x1, y1=box.y1, col=first.col, image=rel)
-        idx = result.blocks.index(first)
+                    x1=box.x1, y1=box.y1, col=first.col, image=rel,
+                    meta={"bbox": list(box), "asset_kind": "equation"})
+        idx = min(result.blocks.index(b) for b in g)
         for b in g:
             result.blocks.remove(b)
         result.blocks.insert(idx, eqb)
@@ -271,6 +304,17 @@ def _figure_box(rects: list[pymupdf.Rect], clip: pymupdf.Rect,
     return box if box.height > 24 and box.width > 40 else clip
 
 
+def _expand_figure_top(page, box: pymupdf.Rect, floor: float = 40) -> pymupdf.Rect:
+    """裁剪上边仍穿过图像时向上扩到白边，不以固定 300/340pt 截图。"""
+    while box.y0 > floor:
+        stripe = page.get_pixmap(clip=pymupdf.Rect(box.x0, box.y0, box.x1, box.y0 + 1), dpi=72)
+        ink = sum(min(stripe.pixel(x, 0)[:3]) < 240 for x in range(stripe.width))
+        if ink / max(1, stripe.width) <= 0.02:
+            break
+        box = pymupdf.Rect(box.x0, max(floor, box.y0 - 4), box.x1, box.y1)
+    return box
+
+
 def _caption_scope(x0: float, x1: float, pw: float, mid: float) -> int:
     """题注归属：-1 跨栏居中，0 左栏，1 右栏。
 
@@ -288,9 +332,9 @@ def _caption_scope(x0: float, x1: float, pw: float, mid: float) -> int:
 def _clip_scope(box: pymupdf.Rect, scope: int, pw: float, mid: float) -> pymupdf.Rect:
     """把裁剪框收进所属栏，避免把邻栏正文烘进图片。"""
     if scope == 0:
-        return pymupdf.Rect(max(box.x0, 45), box.y0, min(box.x1, mid - 6), box.y1)
+        return pymupdf.Rect(max(box.x0, 45), box.y0, min(box.x1, mid + 2), box.y1)
     if scope == 1:
-        return pymupdf.Rect(max(box.x0, mid + 6), box.y0, min(box.x1, pw - 45), box.y1)
+        return pymupdf.Rect(max(box.x0, mid - 2), box.y0, min(box.x1, pw - 45), box.y1)
     return box
 
 
@@ -325,6 +369,27 @@ def _table_rows(page_pl, box: pymupdf.Rect) -> list[list[str]] | None:
         return None
 
 
+def _ruled_table_box(page, caption: pymupdf.Rect, scope: int,
+                     limit: float | None = None) -> pymupdf.Rect | None:
+    """用表格横线定位上下边界；零高度横线不会进入普通图形分组。"""
+    pw = page.rect.width
+    lo, hi = ((45, pw / 2 - 6) if scope == 0 else
+              (pw / 2 + 6, pw - 45) if scope == 1 else (45, pw - 45))
+    stop = limit if limit is not None else page.rect.height - 40
+    rules = []
+    for drawing in page.get_drawings():
+        r = drawing["rect"]
+        if (r.height <= 2 and r.width >= (hi - lo) * 0.6
+                and lo - 3 <= r.x0 and r.x1 <= hi + 3
+                and caption.y1 - 1 <= r.y0 < stop):
+            rules.append(r)
+    rules.sort(key=lambda r: r.y0)
+    if len(rules) < 2 or rules[0].y0 > caption.y1 + 32:
+        return None
+    return pymupdf.Rect(min(r.x0 for r in rules) - 1, rules[0].y0 - 2,
+                        max(r.x1 for r in rules) + 1, rules[-1].y1 + 2) & page.rect
+
+
 def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
             tables: str = "auto") -> Doc:
     """抽取整篇 PDF。图片写入 out_dir/fig，返回 Doc。"""
@@ -339,7 +404,8 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
         )
 
     cols = columns or detect_columns(path)
-    result = Doc(source=os.path.abspath(path), page_size=(doc[0].rect.width, doc[0].rect.height), columns=cols)
+    result = Doc(source=os.path.abspath(path), page_size=(doc[0].rect.width, doc[0].rect.height),
+                 columns=cols, meta={"asset_root": os.path.abspath(out_dir), "asset_dpi": dpi})
     ov_path = os.path.join(out_dir, "overrides.json")
     overrides = {}
     if os.path.exists(ov_path):
@@ -395,6 +461,12 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                 kind = "title"
             elif ABS_HEAD.match(txt) and len(txt) < 40:
                 kind = "abstract"
+            elif ALGO_HEAD.match(txt) and len(txt) < 120:
+                kind = "heading2"
+            elif re.fullmatch(r"[IVXLC]+\.\s+[A-Z][A-Z\s-]+", txt) and len(txt) < 120:
+                kind = "heading1"
+            elif re.match(r"^[A-Z]\.\s+\S", txt) and len(txt) < 120:
+                kind = "heading2"
             elif HEAD_NUM.match(txt) and len(txt) < 120 and (bold or size > body * 1.05):
                 kind = "heading1" if re.match(r"^(\d+\.?|[IVXLC]+\.)\s", txt) else "heading2"
             elif bold and len(txt) < 90 and size >= body * 0.95:
@@ -438,9 +510,22 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                     box = pymupdf.Rect(45, top, pw - 45, y0 - 2)
                 if box.height > 340:
                     box = pymupdf.Rect(box.x0, y0 - 340, box.x1, y0 - 2)
+                preceding_heads = [r[3] for r in raw
+                                   if box.y0 < r[3] < y0 - 2
+                                   and (_caption_scope(x0, x1, pw, mid) == -1
+                                        or (r[0] + r[2]) / 2 < mid and (x0 + x1) / 2 < mid
+                                        or (r[0] + r[2]) / 2 >= mid and (x0 + x1) / 2 >= mid)
+                                   and re.match(r"^(?:[A-Z]|[IVXLC]+)\.\s+", _norm(r[4]))
+                                   and len(_norm(r[4])) < 120
+                                   and _span_size(page_spans, r) >= body * 0.95]
+                if preceding_heads:
+                    box = pymupdf.Rect(box.x0, max(preceding_heads) + 3, box.x1, box.y1)
                 if blk.id in overrides:
                     box = pymupdf.Rect(*overrides[blk.id])
                 else:
+                    floor = max([40] + [h + 3 for h in preceding_heads])
+                    box = pymupdf.Rect(box.x0 - 2, max(floor, box.y0 - 2),
+                                       box.x1 + 2, min(y0 - 2, box.y1 + 2))
                     scope = _caption_scope(x0, x1, pw, mid)
                     if scope == -1:
                         if box.width > 0.55 * pw:                 # 宽图统一给整幅页宽
@@ -449,13 +534,14 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                     else:
                         box = _clip_scope(box, scope, pw, mid)
                         blk.full_width = False
+                    box = _expand_figure_top(page, box, floor)
                 fig_no += 1
                 rel = f"fig/fig{fig_no}.png"
                 pix = page.get_pixmap(clip=box, dpi=dpi)
                 pix.save(os.path.join(out_dir, rel))
                 result.assets[blk.id] = rel
                 blk.image = rel
-                blk.meta["bbox"] = [round(v, 1) for v in box]
+                blk.meta["bbox"] = list(box)
                 boxes.setdefault(pno, []).append(pymupdf.Rect(box))
 
             # 表：题注下方区域。auto 模式先尝试 pdfplumber 重建为可编辑表格，
@@ -466,9 +552,19 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                 nxt_cap = [r[1] for r in raw[i + 1:] if r[1] > y1 + 4
                            and (CAP_FIG.match(_norm(r[4])) or CAP_TAB.match(_norm(r[4])))]
                 limit = min(nxt_cap) - 2 if nxt_cap else None
+                ruled_box = _ruled_table_box(page, box0, scope, limit)
                 groups = [g for g in _group_rects(graphics) if g.height > 24]
                 below = [g for g in groups if y1 - 2 <= g.y0 <= y1 + 26]
-                if below:                                     # 只接受紧贴题注下方的成组图形
+                if ruled_box is not None:
+                    box = ruled_box
+                    blk.full_width = scope == -1
+                    # IEEE 表题有时把最后一行拆为独立文本块，合回题注而非留在表后。
+                    suffixes = [r for r in raw if r[1] >= y1 - 1 and r[3] < box.y0
+                                and box.x0 - 3 <= (r[0] + r[2]) / 2 <= box.x1 + 3]
+                    for suffix in sorted(suffixes, key=lambda r: r[1]):
+                        blk.text += " " + _norm(suffix[4])
+                        boxes.setdefault(pno, []).append(pymupdf.Rect(suffix[:4]))
+                elif below:                                   # 只接受紧贴题注下方的成组图形
                     box = min(below, key=lambda g: g.y0)
                     if box.height > 420:
                         box = pymupdf.Rect(box.x0, box.y0, box.x1, box.y0 + 420)
@@ -508,9 +604,13 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                             plumber = False    # 未安装：一直走图片回退
                     page_pl = plumber.pages[pno] if plumber else None
                     rows = _table_rows(page_pl, box)
+                    if rows:
+                        from .audit import missing_table_tokens
+                        if missing_table_tokens(page, box, rows):
+                            rows = None  # 丢数字/勾选符号时整表回退图片，不能静默接受重建。
                 if rows:
                     blk.meta["table_data"] = rows
-                    blk.meta["bbox"] = [round(v, 1) for v in box]
+                    blk.meta["bbox"] = list(box)
                     # 格子文字已在结构里，同样要剔除区域内的原文本块，避免与表格重复
                     boxes.setdefault(pno, []).append(pymupdf.Rect(box))
                 elif box is not None and box.height > 24:
@@ -518,11 +618,12 @@ def extract(path: str, out_dir: str, dpi: int = 320, columns: int | None = None,
                     page.get_pixmap(clip=box, dpi=dpi).save(os.path.join(out_dir, rel))
                     result.assets[blk.id] = rel
                     blk.image = rel
-                    blk.meta["bbox"] = [round(v, 1) for v in box]
+                    blk.meta["bbox"] = list(box)
                     boxes.setdefault(pno, []).append(pymupdf.Rect(box))
 
             result.blocks.append(blk)
 
+    _extract_algorithms(result, doc, out_dir, dpi, boxes)
     _extract_equations(result, doc, out_dir, dpi, boxes)
     result.blocks = _postprocess(result.blocks, body, boxes, result.page_size[1])
     for n, b in enumerate(result.blocks):
@@ -542,6 +643,11 @@ def _merge_fragments(blocks: list[Block]) -> list[Block]:
     out: list[Block] = []
     for b in blocks:
         p = out[-1] if out else None
+        if (p is not None and b.kind == p.kind == "body"
+                and re.search(r"[A-Za-z]-$", p.text) and re.match(r"^[a-z]", b.text)):
+            p.text = p.text[:-1] + b.text
+            p.y1 = max(p.y1, b.y1) if p.page == b.page else p.y1
+            continue
         if (p is not None and b.kind == "body" and p.kind == "body"
                 and b.page == p.page and b.col == p.col
                 and b.y0 < p.y1 - 1.0 and b.y1 > p.y1 + 1.0):
@@ -559,10 +665,19 @@ REF_ITEM = re.compile(r"^\[\d+\]")
 def _merge_refs(blocks: list[Block]) -> list[Block]:
     """参考文献按条目合并：一条文献常被拆成两三块，逐块渲染会散成断行。"""
     out: list[Block] = []
+    expanded = []
     for b in blocks:
+        if b.kind != "refs":
+            expanded.append(b)
+            continue
+        parts = [part.strip() for part in re.split(r"(?=\[\d+\](?:\s|$))", b.text) if part.strip()]
+        expanded.extend(replace(b, id=f"{b.id}r{i}" if len(parts) > 1 else b.id, text=part)
+                        for i, part in enumerate(parts))
+    for b in expanded:
         p = out[-1] if out else None
         if (p is not None and b.kind == "refs" and p.kind == "refs"
-                and not REF_ITEM.match(b.text) and b.page == p.page and b.col == p.col):
+                and REF_ITEM.match(p.text) and not REF_ITEM.match(b.text)
+                and b.page == p.page and b.col == p.col):
             p.text = (p.text.rstrip() + " " + b.text.lstrip()).strip()
             p.y1 = max(p.y1, b.y1)
             p.x1 = max(p.x1, b.x1)
@@ -576,7 +691,7 @@ def _postprocess(blocks: list[Block], body: float, boxes: dict | None = None,
     """清洗：去页眉页脚/arXiv 戳/版权行，拆出内联标题，识别摘要与题名。"""
     kept: list[Block] = []
     for b in blocks:
-        if b.kind in ("equation", "figure"):
+        if b.kind in ("equation", "figure", "algorithm"):
             kept.append(b)
             continue
         t = b.text

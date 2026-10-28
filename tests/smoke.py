@@ -16,8 +16,8 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from papertrans import build, paginate
-from papertrans.model import Block
+from papertrans import build, paginate  # noqa: E402 -- bootstrap local src before importing
+from papertrans.model import Block  # noqa: E402
 
 
 def check(cond: bool, msg: str) -> None:
@@ -78,6 +78,9 @@ def e2e(pdf: str) -> None:
     check(os.path.exists(out), "产出 PDF")
     with open(os.path.join(wd, "report.json"), encoding="utf-8") as f:
         rep = json.load(f)
+    check(rep["passed"], "原文覆盖与最终打印检查通过")
+    check(rep["source_audit"]["passed"], "直接对照原始 PDF 未发现遗漏/重复裁剪")
+    check(rep["printed_audit"]["passed"], "文字和保护图片完整打印")
     check(rep["coverage"] >= 0.99, f"译文覆盖率 {rep['coverage']}")
     check(rep["pages_output"] >= 1, f"页数 {rep['pages_output']}")
     check(not rep.get("overflow_pages"), "无版心溢出")
@@ -85,11 +88,14 @@ def e2e(pdf: str) -> None:
         doc = json.load(f)
     n_html_tables = sum(1 for b in doc["blocks"] if b.get("meta", {}).get("table_data"))
     n_tables = sum(1 for b in doc["blocks"] if b["kind"] == "table")
-    check(n_tables >= 1, f"识别表格 {n_tables} 张")
-    check(n_html_tables >= 1, f"其中 {n_html_tables} 张重建为可编辑 HTML")
+    check(n_tables == len(rep["source_audit"]["inventory_expected"]["tables"]), f"识别表格 {n_tables} 张")
+    n_image_tables = sum(1 for b in doc["blocks"] if b["kind"] == "table" and b.get("image"))
+    check(n_html_tables + n_image_tables == n_tables,
+          f"表格完整保留：HTML {n_html_tables}，图片回退 {n_image_tables}")
     with open(os.path.join(wd, "final.html"), encoding="utf-8") as f:
         fh = f.read()
-    check("<table><thead>" in fh, "输出 PDF 含结构化表格")
+    if n_html_tables:
+        check("<table><thead>" in fh, "输出 PDF 含结构化表格")
 
 
 if __name__ == "__main__":

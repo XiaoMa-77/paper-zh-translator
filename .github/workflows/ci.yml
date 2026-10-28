@@ -27,6 +27,9 @@ jobs:
       - name: 结构级测试
         run: python tests/smoke.py
 
+      - name: 回归与自动完整性检查测试
+        run: pytest -q
+
       - name: 端到端（自制样本，--provider none）
         run: PAPERTRANS_SAMPLE=samples/toy-paper.pdf python tests/smoke.py
         env:

@@ -13,7 +13,7 @@ import json
 import os
 import time
 
-from . import __version__, build, extract, qa, render, review, translate
+from . import __version__, audit, build, extract, qa, render, review, translate
 from .model import Doc
 
 
@@ -56,6 +56,10 @@ def _build(wd: str, doc: Doc | None, output: str) -> tuple[str, int]:
     from . import paginate
     if doc is None:
         doc = Doc.load(os.path.join(wd, "doc.json"))
+    doc.meta["asset_root"] = os.path.abspath(wd)
+    doc.blocks = extract._merge_refs(doc.blocks)
+    audit.review_translations(doc, checkpoint=os.path.join(wd, "doc.json"))
+    doc.save(os.path.join(wd, "doc.json"))
     blocks = build.to_html_blocks(doc)
     body, pages = paginate.build_pages(blocks, build.CSS, wd)
     html_path = os.path.join(wd, "final.html")
@@ -97,9 +101,13 @@ def _translate_impl(workdir: str, provider: str = "openai", model: str = "",
     provider_obj = translate.get_provider(provider, model=model or None)
     t0 = time.time()
     stats = translate.translate_doc(doc, provider_obj, gl, style)
+    stats["translation_review"] = audit.review_translations(
+        doc, provider=provider_obj if provider == "openai" else None, checkpoint=p)
+    stats["source_audit"] = audit.source_check(doc)
     doc.save(p)
     stats["elapsed_sec"] = round(time.time() - t0, 1)
-    stats["ok"] = not stats["missing"]
+    stats["ok"] = (not stats["missing"] and stats["source_audit"]["passed"]
+                   and stats["translation_review"]["status"] in ("passed", "not_applicable"))
     return _json(**stats)
 
 

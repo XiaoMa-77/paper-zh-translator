@@ -83,7 +83,13 @@ class OpenAIProvider(Provider):
             "temperature": 0.2,
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
         })
-        content = data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"].lstrip()
+        # MiniMax 等推理模型可能把思考段放在 content 开头；其中的花括号不是结果 JSON。
+        if content.startswith("<think>"):
+            _, closed, answer = content.partition("</think>")
+            if not closed:
+                raise RuntimeError("模型只返回了未闭合的思考内容，缺少翻译结果")
+            content = answer.strip()
         m = re.search(r"\{.*\}", content, re.DOTALL)
         if not m:
             raise RuntimeError(f"模型未返回 JSON：{content[:200]}")
@@ -126,6 +132,9 @@ def translate_doc(doc: Doc, provider: Provider, glossary: dict[str, str] | None 
                   style: str = "academic", limit: int = 1500, retries: int = 1) -> dict:
     """翻译全篇。模型偶尔会漏掉一两个块，retries 轮只补译空缺，不重复消耗已译内容。"""
     glossary = glossary or {}
+    doc.meta["provider"] = provider.name
+    if hasattr(provider, "model"):
+        doc.meta["model"] = provider.model
     targets = [b for b in doc.blocks
                if b.kind in {"title", "abstract", "heading1", "heading2", "body", "caption", "table"}
                and b.text.strip()]

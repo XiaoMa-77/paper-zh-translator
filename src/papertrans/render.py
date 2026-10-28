@@ -62,12 +62,16 @@ def dump_dom(html_path: str, timeout: int = 120) -> str:
     return r.stdout
 
 
+def is_full_width(block_html: str) -> bool:
+    return re.search(r'class="[^"]*\b(?:full|head)\b', block_html[:160]) is not None
+
+
 def measure_blocks(blocks: list[str], css: str, workdir: str,
                    span_width: str = "514pt", col_width: str = "250.5pt") -> list[float]:
     """在浏览器里真实排一遍，取每个块的高度（pt）。这是全流程精度的地基。"""
     parts = [f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>{css}</style></head><body>']
     for i, b in enumerate(blocks):
-        w = span_width if 'class="full' in b[:120] or 'class="head' in b[:120] else col_width
+        w = span_width if is_full_width(b) else col_width
         parts.append(f'<div id="m{i}" style="width:{w};"><div>{b}</div></div>')
     parts.append(
         f'<pre id="out"></pre><script>window.addEventListener("load",function(){{'

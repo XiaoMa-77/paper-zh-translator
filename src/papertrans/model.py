@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-Kind = Literal["title", "authors", "abstract", "heading1", "heading2", "body", "caption", "table", "figure", "equation", "refs", "unknown"]
+Kind = Literal["title", "authors", "abstract", "heading1", "heading2", "body", "caption", "table", "figure", "equation", "algorithm", "refs", "unknown"]
 
 
 @dataclass
@@ -42,6 +42,7 @@ class Doc:
     columns: int = 2
     blocks: list[Block] = field(default_factory=list)
     assets: dict[str, str] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -50,6 +51,7 @@ class Doc:
             "columns": self.columns,
             "assets": self.assets,
             "blocks": [b.to_dict() for b in self.blocks],
+            "meta": self.meta,
         }
 
     def save(self, path: str) -> None:
@@ -61,7 +63,8 @@ class Doc:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         doc = cls(source=data["source"], page_size=tuple(data["page_size"]),
-                  columns=data.get("columns", 2), assets=data.get("assets", {}))
+                  columns=data.get("columns", 2), assets=data.get("assets", {}),
+                  meta=data.get("meta", {}))
         for b in data["blocks"]:
             doc.blocks.append(Block(**b))
         return doc

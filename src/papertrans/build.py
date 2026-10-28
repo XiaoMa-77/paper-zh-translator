@@ -17,6 +17,7 @@ body { font-family:"Noto Serif CJK SC","Source Han Serif SC","Times New Roman","
 .page.last { break-after:auto; }
 .flow { column-count:2; column-gap:13pt; column-fill:balance; }
 .full { width:514pt; }
+.page > .full { display:flow-root; }
 p { margin:0 0 4.2pt 0; text-indent:2em; }
 p.noind { text-indent:0; }
 .head { text-align:center; margin-bottom:8pt; }
@@ -53,8 +54,8 @@ tbody tr.top td { border-top:0.6pt solid #000; }
 .eq .mathline { text-align:center; }
 .eq .num { position:absolute; right:0; top:50%; transform:translateY(-50%); }
 math { font-size:10.2pt; font-family:"Latin Modern Math","Cambria Math","Times New Roman",serif; }
-p.refitem { font-size:7.3pt; line-height:1.17; text-indent:-13pt; margin:0 0 2.2pt 13pt; text-align:justify; }
-h2.reftitle { font-size:9pt; font-weight:bold; margin:12pt 0 5pt 0; letter-spacing:1pt; }
+p.refitem { font-size:8pt; line-height:1.2; text-indent:-16pt; margin:0 0 1.5pt 16pt; text-align:left; break-inside:avoid; overflow-wrap:anywhere; }
+h2.reftitle { font-size:9pt; font-weight:bold; margin:12pt 0 5pt 0; letter-spacing:1pt; break-after:avoid; }
 """
 
 
@@ -80,7 +81,9 @@ def _img_style(b: Block) -> str:
     窄公式会被放大两三倍，"where a_t" 这种行内碎片能占掉四行。
     """
     cap = 514.0 if b.full_width else 250.5
-    w = min(b.width + 4, cap) if b.width > 1 else cap
+    bbox = b.meta.get("bbox")
+    image_width = bbox[2] - bbox[0] if bbox and len(bbox) == 4 else b.width
+    w = min(image_width + 4, cap) if image_width > 1 else cap
     return f"width:{w:.1f}pt;max-width:100%;height:auto"
 
 
@@ -126,7 +129,7 @@ def to_html_blocks(doc: Doc) -> list[str]:
             out.append(f'<h2 class="sec">{_e(text)}</h2>')
         elif b.kind == "heading2":
             out.append(f'<h3 class="sub">{_e(text)}</h3>')
-        elif b.kind == "equation" and b.image:
+        elif b.kind in ("equation", "algorithm") and b.image:
             out.append(f'<div class="eq"><div class="mathline"><img src="{b.image}" style="{_img_style(b)}"></div></div>')
         elif b.kind == "caption" and b.image:
             out.append(_figure(b, b.image))
@@ -135,11 +138,15 @@ def to_html_blocks(doc: Doc) -> list[str]:
         elif b.kind == "refs":
             # 只有小节标题该用 h2；条目必须用小字悬挂缩进，否则每条参考文献
             # 都会带上标题的行间距，参考表会被撑成两倍长
+            is_heading = bool(re.fullmatch(r"references|bibliography|参考文献", b.text.strip(), re.IGNORECASE))
             if not ref_head_done:
-                out.append(f'<h2 class="reftitle">{_e(text)}</h2>')
+                heading = text if is_heading else "References"
+                out.append(f'<h2 class="reftitle">{_e(heading)}</h2>')
                 ref_head_done = True
-            else:
-                out.append(f'<p class="refitem">{_e(text)}</p>')
+            if not is_heading:
+                for item in re.split(r"(?=\[\d+\](?:\s|$))", text):
+                    if item.strip():
+                        out.append(f'<p class="refitem">{_e(item.strip())}</p>')
         elif b.text.lstrip().startswith("•") or b.text.lstrip().startswith("-"):
             out.append(f'<p class="noind">{_e(text)}</p>')
         else:
