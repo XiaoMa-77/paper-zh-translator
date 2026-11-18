@@ -2,7 +2,8 @@
 
 > 状态说明：本文件是最初的方案评估。**当前实现范围已收敛为纯本地 CLI**，
 > HTTP API 与 MCP 两条通道按需求暂缓（见第 6.4、6.5、7.2 节，保留备查）。
-> 实际可用的命令与限制以 README.md 为准。
+> 实际可用的命令与限制以 README.md 为准；文中无法仅凭代码确认的估算与存档差异，
+> 统一列在文末「13. 假设与待确认」。
 
 > 目标：把当前"PDF 论文 → 中文双栏 PDF"的翻译流水线封装成可复用工具，既能由 AI 助手指令直接调用，也能被外部系统通过 API 调用；产物保持现有版式与译文质量。
 
@@ -350,3 +351,23 @@ FastAPI + 任务队列（Redis/RQ 或 Cloud Tasks）+ 对象存储。容器需 2
 **把 `extract → translate → build → paginate → render` 收敛成 `papertrans translate in.pdf -o out.pdf` 这一条命令，并配上 `report.json`。**
 
 理由：这一条命令同时满足了"AI 助手直接执行"（助手会跑 shell）和"外部调用"（任何语言都能 subprocess 调它），而 API、MCP、网页都只是它的包装。反过来先做网页，会在最不稳定的排版环节上反复返工。
+
+---
+
+## 13. 假设与待确认
+
+> 本文件是立项时的可行性评估与方案存档，并非对当前实现的逐条描述。
+> 下文把"无法仅凭仓库内代码/配置确认"或"方案与现状有出入"的点集中说明；
+> 凡涉及实际命令、参数与限制，一律以 README.md 与 `src/papertrans/` 源码为准。
+
+1. **存档方案 vs 当前实现（待确认，以 README 为准）**：第 6.3 节的 `submit/status/fetch`、第 6.4 节 HTTP API、第 6.1 节的 URL 输入均**未实现**；第 6.4 节提到的 `openapi.yaml` 也不在仓库中。实际 CLI 为 `run / extract / translate / build / report / doctor`（见 `cli.py`），且 `translate` 的入参是已抽取的工作目录，而非本文示例里的 PDF 路径。
+2. **MCP 通道范围（待确认）**：MCP 仅落地了本地 stdio 的六个工具（doctor / extract_structure / translate_workdir / build_pdf / qa_report / translate_paper，见 `mcp_server.py`）；第 6.5 节的 streamable HTTP 远程部署按"暂缓"处理，代码里没有对应实现。
+3. **仓库结构差异（待确认）**：第 7.1 节的 `layout.py`、`api.py`、`templates/`、`assets/fonts/`、`.github/workflows/translate.yml` 均不存在。当前版式判定在 `extract.py`，质检在 `audit.py`/`qa.py`，语义复核在 `review.py`，数据模型在 `model.py`，CI 为 `.github/workflows/ci.yml`，没有独立模板目录（CSS 内联在 `build.py`）。
+4. **质量百分比（假设）**：第 1、2 节"85% 确定性 + 15% 人工微调""可复现 90–95% 观感"是立项时对少量内部样本的估计，仓库内没有量化评测脚本或基准数据支撑，不能作为验收指标。
+5. **工期与成本（假设）**：第 1、11 节的工期估算与第 9 节"单篇 ¥5–15"为当时按模型价格估的量级，未随版本更新；实际成本取决于所选 Provider 与论文长度。
+6. **渲染引擎（待确认）**：第 4.2/7.3 节写 Playwright；当前实现是优先调用本机 Chromium/Edge 的 `--headless` 打印，找不到浏览器时由 `render.find_browser()` 报明确错误。Playwright 不是必需依赖（`pyproject.toml` 的核心依赖只有 pymupdf / pyyaml / pdfplumber）。
+7. **字体来源（假设）**：CSS 字体栈列出 Noto Serif CJK、Source Han Serif、SimSun、Songti 等作本机回退；"镜像内置 Noto Serif CJK + 子集化"属容器/部署侧假设（见 `Dockerfile`），仓库本身不分发字体文件，缺字体时输出可能回退或出现方框。
+8. **未实现的 v1 功能（待确认）**：第 5 节 v1 的批量、双语对照、`--resume`、术语表管理、HTML/ZIP 输出、报告可视化在源码中均无对应入口，按"暂缓"处理，不应据此对外承诺。
+9. **扫描件与版式白名单（待确认）**：第 8 节的 OCR 分支（PaddleOCR）尚未实现；当前 `extract.extract()` 对文字层过少的 PDF 直接抛错。三栏以上/横排/海报式版式目前没有 profile 白名单，超出 1–2 栏判定范围时按报错或退化处理，而非硬排。
+10. **产物留存与版权策略（假设）**：第 9 节"产物默认 24h 删除"是部署侧策略，CLI 本身不实现过期清理。仓库只放代码与自制样本（`samples/toy-paper.pdf`），不含任何他人论文或译文。
+11. **文档与版本同步（假设）**：`pyproject.toml` 版本为 `0.3.1`，`CHANGELOG.md` 的 Unreleased 记录最近改动；本文作为存档，没有逐版本同步，引用具体行为前应先核对源码与更新日志。

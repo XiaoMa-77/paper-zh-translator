@@ -158,15 +158,17 @@ papertrans extract paper.pdf -o build/x     # 重跑生效
 | `src/papertrans/*.py` | 程序本体（抽取、翻译、构建、分页、渲染、质检、CLI） | 是 |
 | `pyproject.toml` | 打包与依赖声明 | 是 |
 | `tests/smoke.py` | 冒烟测试，结构级 + 端到端 | 否（开发用） |
+| `tests/test_*.py` | pytest 回归测试：抽取边界、公式/表格排版、翻译模型坏结果、语义复核等（离线，模型调用 mock） | 否（开发用） |
+| `scripts/verify.sh` | 一键校验：语法检查 + ruff + pytest + 冒烟测试 | 否（开发用） |
 | `tools/make_sample.py` | 生成合成样本，供演示与回归 | 否 |
 | `samples/toy-paper.pdf` | 自制合成样本（2 页双栏），不含任何他人论文 | 否 |
 | `docs/pipeline.png` | README 工作流程图 | 否 |
 | `docs/compare.png` | README 原译对比图，由样本真实产出 | 否 |
 | `docs/preview.png` | 早期单页预览图 | 否 |
 | `examples/glossary.example.yaml` | 术语表模板 | 否 |
-| `.github/workflows/ci.yml` | CI：ruff + 结构测试 + 样本端到端 | 否 |
+| `.github/workflows/ci.yml` | CI：ruff + pytest + 结构测试 + 样本端到端 | 否 |
 | `Dockerfile` | Linux 容器运行环境（Chromium + Noto CJK） | 否（可选） |
-| `DESIGN.md` | 设计取舍与可行性分析的存档 | 否 |
+| `DESIGN.md` | 设计取舍与可行性分析的存档（背景/架构/接口/数据流/边界；假设与待确认见第 13 节），实际命令以 README 为准 | 否 |
 | `CHANGELOG.md` | 更新日志 | 否 |
 | `README.md` `LICENSE` `.gitignore` | 文档与仓库配置 | 否 |
 
@@ -175,10 +177,14 @@ papertrans extract paper.pdf -o build/x     # 重跑生效
 ## 开发
 
 ```bash
+bash scripts/verify.sh                                         # 一键：语法 + ruff + pytest + 冒烟
 python tests/smoke.py                                          # 结构级
 PAPERTRANS_SAMPLE=/path/to/paper.pdf python tests/smoke.py      # 含端到端
+python -m pytest -q                                            # 回归与完整性测试
 python tools/make_sample.py                                    # 重新生成样本
 ```
+
+`tests/test_*.py` 是离线回归测试，覆盖抽取边界（空 PDF、公式越界）、排版分页、翻译模型坏结果与漏译重试、语义复核与原文/打印完整性；模型调用一律 mock，不访问外部 API、不下载模型。`DESIGN.md` 记录背景、架构、接口、数据流与边界/异常场景，其中「假设与待确认」（第 13 节）标注了早期存档方案与当前实现的差异，实际命令以本文为准。
 
 改动 `extract.py` 或 `build.py` 后，至少跑一遍 `run --provider none` 并翻页检查——版式问题只看 `report.json` 看不出来。
 
